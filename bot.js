@@ -17,13 +17,17 @@ let client;
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 async function findUserByDiscord(discordName, guild) {
   try {
-    const name = discordName.toLowerCase().replace(/#\d+$/, '').trim();
+    const raw = discordName.toLowerCase().replace(/#\d+$/, '').trim();
+    const clean = raw.replace(/[^a-z0-9]/g, '');
     const g = guild || await client.guilds.fetch(GUILD_ID);
     await g.members.fetch();
     const found = g.members.cache.find(m => {
       const uname = (m.user.username || '').toLowerCase();
       const gname = (m.nick || m.user.global_name || '').toLowerCase();
-      return uname === name || gname === name || uname.startsWith(name) || gname.startsWith(name);
+      return uname === raw || gname === raw ||
+             uname.replace(/[^a-z0-9]/g, '') === clean ||
+             gname.replace(/[^a-z0-9]/g, '') === clean ||
+             uname.startsWith(raw) || gname.startsWith(raw);
     });
     return found || null;
   } catch { return null; }
