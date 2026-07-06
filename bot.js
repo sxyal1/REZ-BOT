@@ -100,7 +100,8 @@ client.on('interactionCreate', async interaction => {
   const role = parts[1];
   const discordName = parts.slice(2, -1).join('_');
   await interaction.deferUpdate();
-  const adminName = interaction.user.tag;
+  const adminName = `<@${interaction.user.id}>`;
+  const adminTag = interaction.user.tag;
   const roleName = ROLE_NAMES[role] || role;
   const updatedRow = new ActionRowBuilder().addComponents(
     ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
@@ -108,12 +109,16 @@ client.on('interactionCreate', async interaction => {
   );
   await interaction.message.edit({ components: [updatedRow] });
   if (action === 'accept') {
-    const acceptText = `✅ **Ваша заявка на ${roleName} принята!**\n\n**Принял:** ${adminName}\n\n**Сервер:** ${INVITE}\nПосле входа зайдите в голосовой канал **〔🔊〕𝔾𝕖𝕟𝕖𝕣𝕒𝕝** для прохождения проверки.\n\nПосле проверки вам откроются материалы для изучения.`;
+    const acceptText =
+      `✅ **Ваша заявка на ${roleName} принята!**\n\n` +
+      `**Принял:** ${adminName}\n\n` +
+      `**Сервер:** ${INVITE}\n` +
+      `После входа зайдите в голосовой канал **〔🔊〕𝔾𝕖𝕟𝕖𝕣𝕒𝕝** для прохождения проверки.\n\n` +
+      `После проверки вам откроются материалы для изучения.`;
     const embed = new EmbedBuilder()
-      .setTitle('✅ Заявка принята')
       .setColor(0x4ade80)
       .setDescription(acceptText)
-      .setFooter({ text: `Принял: ${adminName}` })
+      .setFooter({ text: `Принял: ${adminTag}` })
       .setTimestamp();
     const member = await findUserByDiscord(discordName, interaction.guild);
     if (member) {
@@ -125,10 +130,9 @@ client.on('interactionCreate', async interaction => {
   } else if (action === 'reject') {
     const rejectText = `❌ **Ваша заявка на ${roleName} отклонена.**\n\nСпасибо за интерес, но мы решили выбрать другого кандидата.`;
     const embed = new EmbedBuilder()
-      .setTitle('❌ Заявка отклонена')
       .setColor(0xf87171)
       .setDescription(rejectText)
-      .setFooter({ text: `Отклонил: ${adminName}` })
+      .setFooter({ text: `Отклонил: ${adminTag}` })
       .setTimestamp();
     const member = await findUserByDiscord(discordName, interaction.guild);
     if (member) {
