@@ -22,7 +22,7 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
 async function findUserByDiscord(discordName) {
   try {
     const name = discordName.toLowerCase().replace(/#\d+$/, '').trim();
-    let members = await rest.get(Routes.guildMembers(GUILD_ID), { query: { limit: 1000 } });
+    rest.get(Routes.guildMembers(GUILD_ID) + '?limit=1000');
     return members.find(m => {
       const uname = (m.user.username || '').toLowerCase();
       const gname = (m.nick || m.user.global_name || '').toLowerCase();
