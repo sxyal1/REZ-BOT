@@ -1,5 +1,6 @@
 import { Client, GatewayIntentBits, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import express from 'express';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 const TOKEN = process.env.DISCORD_TOKEN || 'MTUyMzc2NTM5MzY4Mjg1ODA0OA.GE8PTn.kcYvGggU1x7PKo-HDTuhqAowwDfuDkThX9j-Us';
 const GUILD_ID = process.env.GUILD_ID || '1442592660853625038';
 const INVITE = process.env.INVITE_URL || 'https://discord.gg/uSSGpABkMT';
@@ -16,6 +17,20 @@ const ROLE_NAMES = {
   support: 'Сапорт',
   curator: 'Ассистент куратора'
 };
+
+const MOD_ROLE_ID = '1442598138761314376';
+const TICKET_FILE = 'ticket_counter.json';
+
+let ticketCounter = 1;
+if (existsSync(TICKET_FILE)) {
+  try { ticketCounter = JSON.parse(readFileSync(TICKET_FILE, 'utf8')).count || 1; } catch {}
+}
+
+function nextTicket() {
+  const n = ticketCounter++;
+  writeFileSync(TICKET_FILE, JSON.stringify({ count: ticketCounter }));
+  return n;
+}
 
 let client;
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -132,35 +147,40 @@ client.once('ready', async () => {
 });
 
 client.on('interactionCreate', async interaction => {
+  try {
   if (interaction.isChatInputCommand()) {
     if (interaction.commandName === 'жалоба') {
       const target = interaction.options.getUser('на_кого');
       const reason = interaction.options.getString('причина');
       const evidence = interaction.options.getString('доказательства');
+      const ticketNum = nextTicket();
 
       const embed = new EmbedBuilder()
-        .setTitle('⚠️ Новая жалоба')
+        .setTitle(`Тикет — ${ticketNum}`)
         .setColor(0xf87171)
         .addFields(
-          { name: 'Отправитель', value: `${interaction.user} (${interaction.user.id})`, inline: false },
-          { name: 'На кого', value: `${target} (${target.id})`, inline: false },
-          { name: 'Причина', value: reason, inline: false }
+          { name: '❓ Вопрос:', value: reason, inline: false },
+          { name: '👤 Пользователь:', value: `${target}`, inline: false },
+          { name: '📋 Имя:', value: `${target.username}`, inline: true },
+          { name: '🆔 ID:', value: `${target.id}`, inline: true },
+          { name: 'Статус:', value: 'Открыт', inline: false }
         )
+        .setThumbnail(target.displayAvatarURL({ dynamic: true }))
         .setTimestamp();
 
-      if (evidence) embed.addFields({ name: 'Доказательства', value: evidence, inline: false });
+      if (evidence) embed.addFields({ name: '📎 Доказательства:', value: evidence, inline: false });
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId(`rep_review_${interaction.user.id}_${target.id}_${Date.now()}`)
+          .setCustomId(`rep_review_${interaction.user.id}_${target.id}_${ticketNum}`)
           .setStyle(ButtonStyle.Primary)
           .setLabel('Рассмотрено')
       );
 
       const channel = await client.channels.fetch(CHANNELS.reports).catch(() => null);
       if (channel) {
-        await channel.send({ embeds: [embed], components: [row] });
-        await interaction.reply({ content: '✅ Ваша жалоба отправлена на рассмотрение саппортам.', ephemeral: true });
+        await channel.send({ content: `<@&${MOD_ROLE_ID}>`, embeds: [embed], components: [row] });
+        await interaction.reply({ content: `✅ Жалоба **#${ticketNum}** отправлена на рассмотрение.`, ephemeral: true });
       } else {
         await interaction.reply({ content: '❌ Ошибка: канал для жалоб не найден.', ephemeral: true });
       }
@@ -179,12 +199,19 @@ client.on('interactionCreate', async interaction => {
       );
       await interaction.message.edit({ components: [updatedRow] });
 
-      const embed_ = EmbedBuilder.from(interaction.message.embeds[0])
-        .setColor(0x4ade80)
-        .addFields({ name: 'Статус', value: `✅ Рассмотрено — <@${interaction.user.id}>` });
+      const old = interaction.message.embeds[0];
+      const newFields = old.fields.map(f => ({
+        name: f.name,
+        value: f.name === 'Статус:' ? `✅ Рассмотрено — <@${interaction.user.id}>` : f.value,
+        inline: f.inline
+      }));
+
+      const embed_ = EmbedBuilder.from(old)
+        .setFields(newFields)
+        .setColor(0x4ade80);
 
       await interaction.message.edit({ embeds: [embed_] });
-      await interaction.followUp({ content: '✅ Жалоба отмечена как рассмотренная.', ephemeral: true });
+      await interaction.followUp({ content: '✅ Тикет рассмотрен.', ephemeral: true });
     }
     return;
   }
@@ -260,6 +287,12 @@ client.on('interactionCreate', async interaction => {
         content: `⚠️ Пользователь **${discordName}** не найден. Отказ отправлен, но DM не доставлен.`,
         ephemeral: true
       });
+    }
+  }
+  } catch (e) {
+    console.error('Interaction error:', e);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ content: '❌ Произошла ошибка.', ephemeral: true }).catch(() => {});
     }
   }
 });
