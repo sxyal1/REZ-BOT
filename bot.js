@@ -158,31 +158,28 @@ client.on('interactionCreate', async interaction => {
       const embed = new EmbedBuilder()
         .setTitle(`Тикет — ${ticketNum}`)
         .setColor(0xf87171)
-        .addFields(
-          { name: '❓ Вопрос:', value: reason, inline: false },
-          { name: '👤 Пользователь:', value: `${target}`, inline: false },
-          { name: '📋 Имя:', value: `${target.username}`, inline: true },
-          { name: '🆔 ID:', value: `${target.id}`, inline: true },
-          { name: 'Статус:', value: 'Открыт', inline: false }
+        .setDescription(
+          `Вопрос:\n${reason}\n\n` +
+          `Пользователь:\n• ${target}\n• Имя: ${target.username}\n• ID: ${target.id}\n\n` +
+          (evidence ? `Доказательства:\n${evidence}\n\n` : '') +
+          `Статус: Рассматривается`
         )
         .setThumbnail(target.displayAvatarURL({ dynamic: true }))
         .setTimestamp();
-
-      if (evidence) embed.addFields({ name: '📎 Доказательства:', value: evidence, inline: false });
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`rep_review_${interaction.user.id}_${target.id}_${ticketNum}`)
           .setStyle(ButtonStyle.Primary)
-          .setLabel('Рассмотрено')
+          .setLabel('Рассмотреть')
       );
 
       const channel = await client.channels.fetch(CHANNELS.reports).catch(() => null);
       if (channel) {
         await channel.send({ content: `<@&${MOD_ROLE_ID}>`, embeds: [embed], components: [row] });
-        await interaction.reply({ content: `✅ Жалоба **#${ticketNum}** отправлена на рассмотрение.`, ephemeral: true });
+        await interaction.reply({ content: `Жалоба #${ticketNum} отправлена на рассмотрение.`, ephemeral: true });
       } else {
-        await interaction.reply({ content: '❌ Ошибка: канал для жалоб не найден.', ephemeral: true });
+        await interaction.reply({ content: 'Ошибка: канал для жалоб не найден.', ephemeral: true });
       }
     }
     return;
@@ -200,18 +197,15 @@ client.on('interactionCreate', async interaction => {
       await interaction.message.edit({ components: [updatedRow] });
 
       const old = interaction.message.embeds[0];
-      const newFields = old.fields.map(f => ({
-        name: f.name,
-        value: f.name === 'Статус:' ? `✅ Рассмотрено — <@${interaction.user.id}>` : f.value,
-        inline: f.inline
-      }));
+      const newDesc = old.description
+        .replace(/Статус: Рассматривается/, `Статус: Завершен\nАгент: ${interaction.user.username}`);
 
       const embed_ = EmbedBuilder.from(old)
-        .setFields(newFields)
+        .setDescription(newDesc)
         .setColor(0x4ade80);
 
       await interaction.message.edit({ embeds: [embed_] });
-      await interaction.followUp({ content: '✅ Тикет рассмотрен.', ephemeral: true });
+      await interaction.followUp({ content: `Тикет рассмотрен модератором ${interaction.user}`, ephemeral: true });
     }
     return;
   }
@@ -292,7 +286,7 @@ client.on('interactionCreate', async interaction => {
   } catch (e) {
     console.error('Interaction error:', e);
     if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: '❌ Произошла ошибка.', ephemeral: true }).catch(() => {});
+      await interaction.reply({ content: 'Произошла ошибка.', ephemeral: true }).catch(() => {});
     }
   }
 });
