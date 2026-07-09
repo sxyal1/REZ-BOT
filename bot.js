@@ -125,9 +125,8 @@ client = new Client({
 });
 
 client.once('ready', async () => {
-  console.log(`Бот запущен как ${client.user.tag}`);
-  console.log(`Сервер: ${GUILD_ID}`);
-  console.log(`Ожидание заявок...`);
+  console.log(`Bot started as ${client.user.tag}`);
+  console.log(`Guild: ${GUILD_ID}`);
 
   const commands = [
     new SlashCommandBuilder()
@@ -138,178 +137,211 @@ client.once('ready', async () => {
 
   try {
     await rest.put(Routes.applicationGuildCommands(client.user.id, GUILD_ID), { body: commands });
-    console.log('Слеш-команды зарегистрированы');
+    console.log('Slash commands registered');
   } catch (e) {
-    console.error('Ошибка регистрации команд:', e.message);
+    console.error('Command registration error:', e.message);
   }
 });
 
 client.on('interactionCreate', async interaction => {
   try {
-  if (interaction.isChatInputCommand()) {
-    if (interaction.commandName === 'ticket') {
-      const description = interaction.options.getString('description');
-      const ticketNum = nextTicket();
+    if (interaction.isChatInputCommand()) {
+      if (interaction.commandName === 'ticket') {
+        const description = interaction.options.getString('description');
+        const ticketNum = nextTicket();
+
+        const embed = new EmbedBuilder()
+          .setTitle(`Ticket #${ticketNum}`)
+          .setColor(0xf87171)
+          .setDescription(
+            `**Question:**\n${description}\n\n` +
+            `**User:**\n${interaction.user} | ${interaction.user.username} | ID: ${interaction.user.id}\n\n` +
+            `**Status:** Open`
+          )
+          .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
+          .setTimestamp();
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`ticket_claim_${interaction.user.id}_${ticketNum}`)
+            .setStyle(ButtonStyle.Primary)
+            .setLabel('Claim'),
+          new ButtonBuilder()
+            .setCustomId(`ticket_close_${interaction.user.id}_${ticketNum}`)
+            .setStyle(ButtonStyle.Danger)
+            .setLabel('Close')
+        );
+
+        const channel = await client.channels.fetch(CHANNELS.reports).catch(() => null);
+        if (channel) {
+          await channel.send({ content: `<@&${MOD_ROLE_ID}>`, embeds: [embed], components: [row] });
+          await interaction.reply({ content: `Ticket #${ticketNum} created. Staff will respond soon.`, ephemeral: true });
+        } else {
+          await interaction.reply({ content: 'Error: reports channel not found.', ephemeral: true });
+        }
+      }
+      return;
+    }
+
+    if (!interaction.isButton()) return;
+
+    if (interaction.customId.startsWith('ticket_')) {
+      const parts = interaction.customId.split('_');
+      const action = parts[1];
+      const userId = parts[2];
+      const ticketNum = parts[3];
+
+      if (action === 'claim') {
+        await interaction.deferUpdate();
+
+        const guild = interaction.guild;
+        const category = guild.channels.cache.find(c => c.name.toLowerCase() === 'tickets' && c.type === 4);
+
+        const ticketChannel = await guild.channels.create({
+          name: `ticket-${ticketNum}`,
+          type: 0,
+          parent: category ? category.id : null,
+          permissionOverwrites: [
+            { id: guild.id, deny: ['ViewChannel'] },
+            { id: userId, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+            { id: interaction.user.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+            { id: MOD_ROLE_ID, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] }
+          ]
+        });
+
+        await ticketChannel.send({ content: `<@${userId}> Welcome to your support ticket. A staff member will assist you shortly.` });
+
+        const updatedRow = new ActionRowBuilder().addComponents(
+          ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
+          ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
+        );
+        await interaction.message.edit({ components: [updatedRow] });
+
+        const old = interaction.message.embeds[0];
+        const newDesc = old.description
+          .replace(/\*\*Status:\*\* Open/, `**Status:** Claimed\n**Agent:** ${interaction.user.username}\n**Channel:** <#${ticketChannel.id}>`);
+
+        const embed_ = EmbedBuilder.from(old)
+          .setDescription(newDesc)
+          .setColor(0x4ade80);
+
+        await interaction.message.edit({ embeds: [embed_] });
+        await interaction.followUp({ content: `Ticket #${ticketNum} claimed. Channel ${ticketChannel} created.`, ephemeral: true });
+      }
+
+      if (action === 'close') {
+        await interaction.deferUpdate();
+
+        const old = interaction.message.embeds[0];
+        const newDesc = old.description
+          .replace(/\*\*Status:\*\* Open/, '**Status:** Closed')
+          .replace(/\*\*Status:\*\* Claimed/, '**Status:** Closed');
+
+        const embed_ = EmbedBuilder.from(old)
+          .setDescription(newDesc)
+          .setColor(0x9ca3af);
+
+        const updatedRow = new ActionRowBuilder().addComponents(
+          ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
+          ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
+        );
+        await interaction.message.edit({ components: [updatedRow], embeds: [embed_] });
+
+        const ticketChannel = interaction.guild.channels.cache.find(c => c.name === `ticket-${ticketNum}`);
+        if (ticketChannel) {
+          await ticketChannel.send({ content: 'This ticket has been closed by a staff member.' });
+          setTimeout(() => ticketChannel.delete().catch(() => {}), 5000);
+        }
+
+        await interaction.followUp({ content: `Ticket #${ticketNum} closed.`, ephemeral: true });
+      }
+      return;
+    }
+
+    const parts = interaction.customId.split('_');
+    const action = parts[0] === 'a' ? 'accept' : 'reject';
+    const role = parts[1];
+    const discordName = parts.slice(2, -1).join('_');
+
+    await interaction.deferUpdate();
+
+    const adminName = `<@${interaction.user.id}>`;
+    const adminTag = interaction.user.tag;
+    const roleName = ROLE_NAMES[role] || role;
+
+    const updatedRow = new ActionRowBuilder().addComponents(
+      ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
+      ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
+    );
+    await interaction.message.edit({ components: [updatedRow] });
+
+    if (action === 'accept') {
+      const acceptText =
+        `**Your application for ${roleName} has been accepted!**\n\n` +
+        `**Accepted by:** ${adminName}\n\n` +
+        `**Server:** ${INVITE}\n` +
+        `After joining, go to voice channel for verification.\n\n` +
+        `After verification you will get access to study materials.`;
 
       const embed = new EmbedBuilder()
-        .setTitle(`Ticket #${ticketNum}`)
-        .setColor(0xf87171)
-        .setDescription(
-          `**Question:**\n${description}\n\n` +
-          `**User:**\n• ${interaction.user}\n• Name: ${interaction.user.username}\n• ID: ${interaction.user.id}\n\n` +
-          `**Status:** Open`
-        )
-        .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
+        .setColor(0x4ade80)
+        .setDescription(acceptText)
+        .setFooter({ text: `Accepted by: ${adminTag}` })
         .setTimestamp();
 
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`ticket_claim_${interaction.user.id}_${ticketNum}`)
-          .setStyle(ButtonStyle.Primary)
-          .setLabel('Claim'),
-        new ButtonBuilder()
-          .setCustomId(`ticket_close_${interaction.user.id}_${ticketNum}`)
-          .setStyle(ButtonStyle.Danger)
-          .setLabel('Close')
-      );
-
-      const channel = await client.channels.fetch(CHANNELS.reports).catch(() => null);
-      if (channel) {
-        await channel.send({ content: `<@&${MOD_ROLE_ID}>`, embeds: [embed], components: [row] });
-        await interaction.reply({ content: `Ticket #${ticketNum} created. Staff will respond soon.`, ephemeral: true });
+      const member = await findUserByDiscord(discordName, interaction.guild);
+      if (member) {
+        const sent = await sendDM(member.user.id, embed);
+        await interaction.followUp({
+          content: sent
+            ? `Notification sent to **${discordName}**`
+            : `Could not send DM to **${discordName}** (DMs closed)`,
+          ephemeral: true
+        });
       } else {
-        await interaction.reply({ content: 'Error: reports channel not found.', ephemeral: true });
+        await interaction.followUp({
+          content: `User **${discordName}** not found on server.`,
+          ephemeral: true
+        });
+      }
+    } else if (action === 'reject') {
+      const rejectText =
+        `**Your application for ${roleName} has been rejected.**\n\n` +
+        `Thank you for your interest, but we decided to go with another candidate.`;
+
+      const embed = new EmbedBuilder()
+        .setColor(0xf87171)
+        .setDescription(rejectText)
+        .setFooter({ text: `Rejected by: ${adminTag}` })
+        .setTimestamp();
+
+      const member = await findUserByDiscord(discordName, interaction.guild);
+      if (member) {
+        const sent = await sendDM(member.user.id, embed);
+        await interaction.followUp({
+          content: sent
+            ? `Notification sent to **${discordName}**`
+            : `Could not send DM to **${discordName}**`,
+          ephemeral: true
+        });
+      } else {
+        await interaction.followUp({
+          content: `User **${discordName}** not found.`,
+          ephemeral: true
+        });
       }
     }
-    return;
+  } catch (e) {
+    console.error('Interaction error:', e);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ content: 'An error occurred.', ephemeral: true }).catch(() => {});
+    }
   }
+});
 
-  if (!interaction.isButton()) return;
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`HTTP server on port ${PORT}`));
 
-  if (interaction.customId.startsWith('ticket_')) {
-    const parts = interaction.customId.split('_');
-    const action = parts[1];
-    const userId = parts[2];
-    const ticketNum = parts[3];
-
-    if (action === 'claim') {
-      await interaction.deferUpdate();
-
-      const guild = interaction.guild;
-      const category = guild.channels.cache.find(c => c.name.toLowerCase() === 'tickets' && c.type === 4);
-      
-      const ticketChannel = await guild.channels.create({
-        name: `ticket-${ticketNum}`,
-        type: 0,
-        parent: category ? category.id : null,
-        permissionOverwrites: [
-          { id: guild.id, deny: ['ViewChannel'] },
-          { id: userId, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
-          { id: interaction.user.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
-          { id: MOD_ROLE_ID, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] }
-        ]
-      });
-
-      await ticketChannel.send({ content: `<@${userId}> Welcome to your support ticket. A staff member will assist you shortly.` });
-
-      const closeRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`ticket_close_${userId}_${ticketNum}`)
-          .setStyle(ButtonStyle.Danger)
-          .setLabel('Close')
-      );
-
-      const updatedRow = new ActionRowBuilder().addComponents(
-        ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
-        ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
-      );
-      await interaction.message.edit({ components: [updatedRow] });
-
-      const old = interaction.message.embeds[0];
-      const newDesc = old.description
-        .replace(/\*\*Status:\*\* Open/, `**Status:** Claimed\n**Agent:** ${interaction.user.username}\n**Channel:** <#${ticketChannel.id}>`);
-
-      const embed_ = EmbedBuilder.from(old)
-        .setDescription(newDesc)
-        .setColor(0x4ade80);
-
-      await interaction.message.edit({ embeds: [embed_] });
-      await interaction.followUp({ content: `Ticket #${ticketNum} claimed. Channel ${ticketChannel} created.`, ephemeral: true });
-    }
-
-    if (action === 'close') {
-      await interaction.deferUpdate();
-
-      const old = interaction.message.embeds[0];
-      const newDesc = old.description
-        .replace(/\*\*Status:\*\* Open/, '**Status:** Closed')
-        .replace(/\*\*Status:\*\* Claimed/, '**Status:** Closed');
-
-      const embed_ = EmbedBuilder.from(old)
-        .setDescription(newDesc)
-        .setColor(0x9ca3af);
-
-      const updatedRow = new ActionRowBuilder().addComponents(
-        ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
-        ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
-      );
-      await interaction.message.edit({ components: [updatedRow], embeds: [embed_] });
-
-      const ticketChannel = interaction.guild.channels.cache.find(c => c.name === `ticket-${ticketNum}`);
-      if (ticketChannel) {
-        await ticketChannel.send({ content: 'This ticket has been closed by a staff member.' });
-        setTimeout(() => ticketChannel.delete().catch(() => {}), 5000);
-      }
-
-      await interaction.followUp({ content: `Ticket #${ticketNum} closed.`, ephemeral: true });
-    }
-    return;
-  }
-
-  const parts = interaction.customId.split('_');
-  const action = parts[0] === 'a' ? 'accept' : 'reject';
-  const role = parts[1];
-  const discordName = parts.slice(2, -1).join('_');
-
-  await interaction.deferUpdate();
-
-  const adminName = `<@${interaction.user.id}>`;
-  const adminTag = interaction.user.tag;
-  const roleName = ROLE_NAMES[role] || role;
-
-  const updatedRow = new ActionRowBuilder().addComponents(
-    ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
-    ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
-  );
-  await interaction.message.edit({ components: [updatedRow] });
-
-  if (action === 'accept') {
-    const acceptText =
-      `✅ **Ваша заявка на ${roleName} принята!**\n\n` +
-      `**Принял:** ${adminName}\n\n` +
-      `**Сервер:** ${INVITE}\n` +
-      `После входа зайдите в голосовой канал **〔🔊〕𝔾𝕖𝕟𝕖𝕣𝕒𝕝** для прохождения проверки.\n\n` +
-      `После проверки вам откроются материалы для изучения.`;
-
-    const embed = new EmbedBuilder()
-      .setColor(0x4ade80)
-      .setDescription(acceptText)
-      .setFooter({ text: `Принял: ${adminTag}` })
-      .setTimestamp();
-
-    const member = await findUserByDiscord(discordName, interaction.guild);
-    if (member) {
-      const sent = await sendDM(member.user.id, embed);
-      await interaction.followUp({
-        content: sent
-          ? `✅ Уведомление отправлено **${discordName}**`
-          : `⚠️ Не удалось отправить DM **${discordName}** (закрыты сообщения)`,
-        ephemeral: true
-      });
-    } else {
-      await interaction.followUp({
-        content: `⚠️ Пользователь **${discordName}** не найден на сервере. Отправьте приглашение вручную.`,
-        ephemeral: true
-      });
-    }
-  } else if (action === '
+client.login(TOKEN).catch(err => {
+  console.error('Discord login error:', err.message);
+});
