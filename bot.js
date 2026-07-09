@@ -14,7 +14,9 @@ const CHANNELS = {
   moderator: process.env.CH_MOD || '1480141289872687154',
   support: process.env.CH_SUPPORT || '1523738675186499665',
   curator: process.env.CH_CURATOR || '1523738807533437128',
-  reports: '1524186097180086355'
+  reports: '1524186097180086355',
+  supportStats: '1524198456607117332',
+  modStats: '1523152195523186739'
 };
 
 const ROLE_NAMES = {
@@ -26,6 +28,7 @@ const ROLE_NAMES = {
 const MOD_ROLE_ID = '1442598138761314376';
 const SUPPORT_ROLE_ID = '1524203277863096411';
 const TICKET_FILE = join(__dirname, 'ticket_counter.json');
+const VOICE_FILE = join(__dirname, 'voice_time.json');
 
 let ticketCounter = 1;
 if (existsSync(TICKET_FILE)) {
@@ -36,6 +39,103 @@ function nextTicket() {
   const n = ticketCounter++;
   writeFileSync(TICKET_FILE, JSON.stringify({ count: ticketCounter }));
   return n;
+}
+
+let voiceData = {};
+if (existsSync(VOICE_FILE)) {
+  try { voiceData = JSON.parse(readFileSync(VOICE_FILE, 'utf8')); } catch {}
+}
+
+function saveVoiceData() {
+  writeFileSync(VOICE_FILE, JSON.stringify(voiceData, null, 2));
+}
+
+const voiceJoinTimes = {};
+const VOICE_NORM_MS = 2 * 60 * 60 * 1000;
+
+function getTodayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function formatDuration(ms) {
+  const totalMin = Math.floor(ms / 60000);
+  const hours = Math.floor(totalMin / 60);
+  const minutes = totalMin % 60;
+  return `${hours}h ${minutes}m`;
+}
+
+function getDailyData(userId) {
+  const today = getTodayKey();
+  if (!voiceData[userId]) {
+    voiceData[userId] = { username: '', daily: {} };
+  }
+  if (!voiceData[userId].daily[today]) {
+    voiceData[userId].daily[today] = { ms: 0, sessions: [] };
+  }
+  return voiceData[userId].daily[today];
+}
+
+async function postStatsTable(roleId, channelId) {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const today = getTodayKey();
+
+  const members = await guild.members.fetch();
+  const roleMembers = members.filter(m => m.roles.cache.has(roleId));
+
+  if (roleMembers.size === 0) return;
+
+  const rows = [];
+  for (const [, member] of roleMembers) {
+    const data = voiceData[member.id];
+    let dailyMs = 0;
+    if (data && data.daily[today]) {
+      dailyMs = data.daily[today].ms;
+    }
+    const status = dailyMs >= VOICE_NORM_MS ? '✅' : '❌';
+    rows.push({
+      name: member.displayName || member.user.username,
+      time: formatDuration(dailyMs),
+      status
+    });
+  }
+
+  rows.sort((a, b) => a.name.localeCompare(b.name));
+
+  const description = rows.map(r =>
+    `${r.status} **${r.name}** — ${r.time}`
+  ).join('\n');
+
+  const totalMs = rows.reduce((sum, r) => {
+    const d = voiceData[Object.keys(voiceData).find(k => {
+      const m = roleMembers.find(u => u.id === k);
+      return m && (m.displayName || m.user.username) === r.name;
+    })];
+    return sum + (d && d.daily[today] ? d.daily[today].ms : 0);
+  }, 0);
+
+  const aboveNorm = rows.filter(r => r.status === '✅').length;
+  const belowNorm = rows.filter(r => r.status === '❌').length;
+
+  const embed = new EmbedBuilder()
+    .setTitle(`Voice Stats — ${today}`)
+    .setColor(0x60a5fa)
+    .setDescription(description || 'No data for today')
+    .addFields(
+      { name: 'Above norm (2h+)', value: `${aboveNorm}`, inline: true },
+      { name: 'Below norm', value: `${belowNorm}`, inline: true }
+    )
+    .setTimestamp();
+
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (channel) {
+    const lastMsg = await channel.messages.fetch({ limit: 1 }).catch(() => null);
+    const last = lastMsg?.first();
+    if (last && last.author.id === client.user.id && last.embeds[0]?.title?.startsWith('Voice Stats')) {
+      await last.edit({ embeds: [embed] }).catch(() => {});
+    } else {
+      await channel.send({ embeds: [embed] }).catch(() => {});
+    }
+  }
 }
 
 let client;
@@ -127,7 +227,12 @@ app.post('/apply', async (req, res) => {
 });
 
 client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMembers]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates
+  ]
 });
 
 client.once('ready', async () => {
@@ -138,7 +243,11 @@ client.once('ready', async () => {
     new SlashCommandBuilder()
       .setName('ticket')
       .setDescription('Create a support ticket')
-      .addStringOption(o => o.setName('description').setDescription('Describe your issue or question').setRequired(true))
+      .addStringOption(o => o.setName('description').setDescription('Describe your issue or question').setRequired(true)),
+    new SlashCommandBuilder()
+      .setName('voicestats')
+      .setDescription('Show voice channel time stats for support and admin')
+      .addUserOption(o => o.setName('user').setDescription('Check specific user (optional)').setRequired(false))
   ];
 
   try {
@@ -146,6 +255,56 @@ client.once('ready', async () => {
     console.log('Slash commands registered');
   } catch (e) {
     console.error('Command registration error:', e.message);
+  }
+});
+
+client.on('voiceStateUpdate', async (oldState, newState) => {
+  try {
+    const member = newState.member || oldState.member;
+    if (!member) return;
+
+    const hasMod = member.roles.cache.has(MOD_ROLE_ID);
+    const hasSupport = member.roles.cache.has(SUPPORT_ROLE_ID);
+    if (!hasMod && !hasSupport) return;
+
+    const userId = member.id;
+
+    if (!voiceData[userId]) {
+      voiceData[userId] = { username: member.user.username, daily: {} };
+    }
+    voiceData[userId].username = member.user.username;
+
+    const wasInVoice = !!oldState.channelId;
+    const isInVoice = !!newState.channelId;
+
+    if (!wasInVoice && isInVoice) {
+      voiceJoinTimes[userId] = Date.now();
+    }
+
+    if (wasInVoice && !isInVoice) {
+      const joinTime = voiceJoinTimes[userId];
+      if (joinTime) {
+        const duration = Date.now() - joinTime;
+        const daily = getDailyData(userId);
+        daily.ms += duration;
+        daily.sessions.push({
+          time: new Date().toISOString(),
+          duration,
+          channel: oldState.channel.name
+        });
+        delete voiceJoinTimes[userId];
+        saveVoiceData();
+
+        if (hasMod) {
+          await postStatsTable(MOD_ROLE_ID, CHANNELS.modStats);
+        }
+        if (hasSupport) {
+          await postStatsTable(SUPPORT_ROLE_ID, CHANNELS.supportStats);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Voice state error:', e);
   }
 });
 
@@ -186,6 +345,71 @@ client.on('interactionCreate', async interaction => {
           await interaction.reply({ content: 'Error: reports channel not found.', ephemeral: true });
         }
       }
+
+      if (interaction.commandName === 'voicestats') {
+        const targetUser = interaction.options.getUser('user');
+        const today = getTodayKey();
+
+        if (targetUser) {
+          const data = voiceData[targetUser.id];
+          if (!data || !data.daily[today]) {
+            await interaction.reply({ content: `No voice data for ${targetUser.username} today.`, ephemeral: true });
+            return;
+          }
+
+          const daily = data.daily[today];
+          const status = daily.ms >= VOICE_NORM_MS ? '✅ Norm met' : '❌ Below norm';
+
+          const embed = new EmbedBuilder()
+            .setTitle(`Voice Stats — ${data.username} — ${today}`)
+            .setColor(daily.ms >= VOICE_NORM_MS ? 0x4ade80 : 0xf87171)
+            .addFields(
+              { name: 'Today', value: formatDuration(daily.ms), inline: true },
+              { name: 'Status', value: status, inline: true },
+              { name: 'Sessions', value: `${daily.sessions.length}`, inline: true }
+            )
+            .setTimestamp();
+
+          await interaction.reply({ embeds: [embed], ephemeral: true });
+        } else {
+          const members = await interaction.guild.members.fetch();
+          const modMembers = members.filter(m => m.roles.cache.has(MOD_ROLE_ID));
+          const supportMembers = members.filter(m => m.roles.cache.has(SUPPORT_ROLE_ID));
+
+          const rows = [];
+          for (const [, m] of modMembers) {
+            const d = voiceData[m.id];
+            const ms = d && d.daily[today] ? d.daily[today].ms : 0;
+            rows.push({ name: m.displayName || m.user.username, time: formatDuration(ms), status: ms >= VOICE_NORM_MS ? '✅' : '❌', role: 'Mod' });
+          }
+          for (const [, m] of supportMembers) {
+            const d = voiceData[m.id];
+            const ms = d && d.daily[today] ? d.daily[today].ms : 0;
+            rows.push({ name: m.displayName || m.user.username, time: formatDuration(ms), status: ms >= VOICE_NORM_MS ? '✅' : '❌', role: 'Support' });
+          }
+
+          if (rows.length === 0) {
+            await interaction.reply({ content: 'No support or mod members found.', ephemeral: true });
+            return;
+          }
+
+          const list = rows.map(r => `${r.status} **${r.name}** (${r.role}) — ${r.time}`).join('\n');
+          const above = rows.filter(r => r.status === '✅').length;
+          const below = rows.filter(r => r.status === '❌').length;
+
+          const embed = new EmbedBuilder()
+            .setTitle(`Voice Stats — ${today}`)
+            .setColor(0x60a5fa)
+            .setDescription(list)
+            .addFields(
+              { name: 'Above norm (2h+)', value: `${above}`, inline: true },
+              { name: 'Below norm', value: `${below}`, inline: true }
+            )
+            .setTimestamp();
+
+          await interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+      }
       return;
     }
 
@@ -204,7 +428,7 @@ client.on('interactionCreate', async interaction => {
         const category = guild.channels.cache.find(c => c.name.toLowerCase() === 'tickets' && c.type === 4);
 
         const ticketChannel = await guild.channels.create({
-          name: `ticket-${userId}`,
+          name: `ticket-${ticketNum}`,
           type: 0,
           parent: category ? category.id : null,
           permissionOverwrites: [
@@ -251,7 +475,7 @@ client.on('interactionCreate', async interaction => {
       if (action === 'close') {
         await interaction.deferUpdate();
 
-        const ticketChannel = interaction.guild.channels.cache.find(c => c.name === `ticket-${userId}`);
+        const ticketChannel = interaction.guild.channels.cache.find(c => c.name === `ticket-${ticketNum}`);
 
         const old = interaction.message.embeds[0];
         if (old) {
@@ -287,7 +511,7 @@ client.on('interactionCreate', async interaction => {
       if (action === 'help') {
         await interaction.deferUpdate();
 
-        const ticketChannel = interaction.guild.channels.cache.find(c => c.name === `ticket-${userId}`);
+        const ticketChannel = interaction.guild.channels.cache.find(c => c.name === `ticket-${ticketNum}`);
 
         if (ticketChannel) {
           await ticketChannel.permissionOverwrites.create(SUPPORT_ROLE_ID, {
