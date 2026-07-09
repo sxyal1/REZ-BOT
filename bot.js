@@ -204,7 +204,7 @@ client.on('interactionCreate', async interaction => {
         const category = guild.channels.cache.find(c => c.name.toLowerCase() === 'tickets' && c.type === 4);
 
         const ticketChannel = await guild.channels.create({
-          name: `ticket-${ticketNum}`,
+          name: `ticket-${userId}`,
           type: 0,
           parent: category ? category.id : null,
           permissionOverwrites: [
@@ -251,7 +251,7 @@ client.on('interactionCreate', async interaction => {
       if (action === 'close') {
         await interaction.deferUpdate();
 
-        const ticketChannel = interaction.guild.channels.cache.find(c => c.name === `ticket-${ticketNum}`);
+        const ticketChannel = interaction.guild.channels.cache.find(c => c.name === `ticket-${userId}`);
 
         const old = interaction.message.embeds[0];
         if (old) {
@@ -287,7 +287,7 @@ client.on('interactionCreate', async interaction => {
       if (action === 'help') {
         await interaction.deferUpdate();
 
-        const ticketChannel = interaction.guild.channels.cache.find(c => c.name === `ticket-${ticketNum}`);
+        const ticketChannel = interaction.guild.channels.cache.find(c => c.name === `ticket-${userId}`);
 
         if (ticketChannel) {
           await ticketChannel.permissionOverwrites.create(SUPPORT_ROLE_ID, {
@@ -299,7 +299,8 @@ client.on('interactionCreate', async interaction => {
           await ticketChannel.send({ content: `<@&${SUPPORT_ROLE_ID}> Help has been requested in this ticket.` });
 
           const updatedRow = new ActionRowBuilder().addComponents(
-            ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true)
+            ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
+            ButtonBuilder.from(interaction.message.components[0].components[1])
           );
           await interaction.message.edit({ components: [updatedRow] });
 
@@ -308,7 +309,8 @@ client.on('interactionCreate', async interaction => {
           await interaction.channel.send({ content: `<@&${SUPPORT_ROLE_ID}> Help has been requested for Ticket #${ticketNum}. Please claim this ticket to assist.` });
 
           const updatedRow = new ActionRowBuilder().addComponents(
-            ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true)
+            ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
+            ButtonBuilder.from(interaction.message.components[0].components[1])
           );
           await interaction.message.edit({ components: [updatedRow] });
 
