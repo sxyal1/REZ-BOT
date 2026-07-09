@@ -651,6 +651,16 @@ client.on('interactionCreate', async interaction => {
         );
         await interaction.message.edit({ components: [updatedRow] });
 
+        const member = await findUserByDiscord(discordName, interaction.guild);
+        if (member) {
+          const dmEmbed = new EmbedBuilder()
+            .setColor(0x4ade80)
+            .setTitle('Заявка на отпуск')
+            .setDescription(`Ваша заявка на отпуск **принята**.\n\nАдминистратор одобрил ваш отпуск. Приятного отдыха!`)
+            .setTimestamp();
+          await sendDM(member.user.id, dmEmbed);
+        }
+
         await interaction.followUp({ content: `Заявка на отпуск от **${discordName}** принята.`, ephemeral: true });
       }
 
@@ -667,6 +677,16 @@ client.on('interactionCreate', async interaction => {
           ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
         );
         await interaction.message.edit({ components: [updatedRow] });
+
+        const member = await findUserByDiscord(discordName, interaction.guild);
+        if (member) {
+          const dmEmbed = new EmbedBuilder()
+            .setColor(0xf87171)
+            .setTitle('Заявка на отпуск')
+            .setDescription(`Ваша заявка на отпуск **отклонена**.\n\nАдминистратор отклонил вашу заявку. Если есть вопросы — обратитесь к администрации.`)
+            .setTimestamp();
+          await sendDM(member.user.id, dmEmbed);
+        }
 
         await interaction.followUp({ content: `Заявка на отпуск от **${discordName}** отклонена.`, ephemeral: true });
       }
