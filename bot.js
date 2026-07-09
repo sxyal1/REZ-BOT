@@ -1,6 +1,11 @@
 import { Client, GatewayIntentBits, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import express from 'express';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 const TOKEN = process.env.DISCORD_TOKEN || 'MTUyMzc2NTM5MzY4Mjg1ODA0OA.GE8PTn.kcYvGggU1x7PKo-HDTuhqAowwDfuDkThX9j-Us';
 const GUILD_ID = process.env.GUILD_ID || '1442592660853625038';
 const INVITE = process.env.INVITE_URL || 'https://discord.gg/uSSGpABkMT';
@@ -20,7 +25,7 @@ const ROLE_NAMES = {
 
 const MOD_ROLE_ID = '1442598138761314376';
 const SUPPORT_ROLE_ID = '1524203277863096411';
-const TICKET_FILE = 'ticket_counter.json';
+const TICKET_FILE = join(__dirname, 'ticket_counter.json');
 
 let ticketCounter = 1;
 if (existsSync(TICKET_FILE)) {
@@ -213,7 +218,11 @@ client.on('interactionCreate', async interaction => {
           new ButtonBuilder()
             .setCustomId(`ticket_help_${userId}_${ticketNum}`)
             .setStyle(ButtonStyle.Secondary)
-            .setLabel('Request Help')
+            .setLabel('Request Help'),
+          new ButtonBuilder()
+            .setCustomId(`ticket_close_${userId}_${ticketNum}`)
+            .setStyle(ButtonStyle.Danger)
+            .setLabel('Close')
         );
 
         await ticketChannel.send({
@@ -242,22 +251,31 @@ client.on('interactionCreate', async interaction => {
       if (action === 'close') {
         await interaction.deferUpdate();
 
-        const old = interaction.message.embeds[0];
-        const newDesc = old.description
-          .replace(/\*\*Status:\*\* Open/, '**Status:** Closed')
-          .replace(/\*\*Status:\*\* Claimed/, '**Status:** Closed');
-
-        const embed_ = EmbedBuilder.from(old)
-          .setDescription(newDesc)
-          .setColor(0x9ca3af);
-
-        const updatedRow = new ActionRowBuilder().addComponents(
-          ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
-          ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
-        );
-        await interaction.message.edit({ components: [updatedRow], embeds: [embed_] });
-
         const ticketChannel = interaction.guild.channels.cache.find(c => c.name === `ticket-${ticketNum}`);
+
+        const old = interaction.message.embeds[0];
+        if (old) {
+          const newDesc = old.description
+            .replace(/\*\*Status:\*\* Open/, '**Status:** Closed')
+            .replace(/\*\*Status:\*\* Claimed/, '**Status:** Closed');
+
+          const embed_ = EmbedBuilder.from(old)
+            .setDescription(newDesc)
+            .setColor(0x9ca3af);
+
+          const updatedRow = new ActionRowBuilder().addComponents(
+            ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
+            ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
+          );
+          await interaction.message.edit({ components: [updatedRow], embeds: [embed_] });
+        } else {
+          const updatedRow = new ActionRowBuilder().addComponents(
+            ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
+            ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
+          );
+          await interaction.message.edit({ components: [updatedRow] });
+        }
+
         if (ticketChannel) {
           await ticketChannel.send({ content: 'This ticket has been closed by a staff member.' });
           setTimeout(() => ticketChannel.delete().catch(() => {}), 5000);
