@@ -19,6 +19,7 @@ const ROLE_NAMES = {
 };
 
 const MOD_ROLE_ID = '1442598138761314376';
+const SUPPORT_ROLE_ID = '1524203277863096411';
 const TICKET_FILE = 'ticket_counter.json';
 
 let ticketCounter = 1;
@@ -165,11 +166,16 @@ client.on('interactionCreate', async interaction => {
           new ButtonBuilder()
             .setCustomId(`ticket_claim_${interaction.user.id}_${ticketNum}`)
             .setStyle(ButtonStyle.Primary)
-            .setLabel('Claim'),
+            .setLabel('Открыть тикет'),
           new ButtonBuilder()
             .setCustomId(`ticket_close_${interaction.user.id}_${ticketNum}`)
             .setStyle(ButtonStyle.Danger)
-            .setLabel('Close')
+            .setLabel('Закрыть тикет'),
+          new ButtonBuilder()
+            .setCustomId(`ticket_help_${interaction.user.id}_${ticketNum}`)
+            .setStyle(ButtonStyle.Secondary)
+            .setLabel('Запросить помощь')
+            .setEmoji('🆘')
         );
 
         const channel = await client.channels.fetch(CHANNELS.reports).catch(() => null);
@@ -204,16 +210,27 @@ client.on('interactionCreate', async interaction => {
           permissionOverwrites: [
             { id: guild.id, deny: ['ViewChannel'] },
             { id: userId, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
-            { id: interaction.user.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
-            { id: MOD_ROLE_ID, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] }
+            { id: interaction.user.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] }
           ]
         });
 
-        await ticketChannel.send({ content: `<@${userId}> Welcome to your support ticket. A staff member will assist you shortly.` });
+        const helpRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`ticket_help_${userId}_${ticketNum}`)
+            .setStyle(ButtonStyle.Secondary)
+            .setLabel('Запросить помощь')
+            .setEmoji('🆘')
+        );
+
+        await ticketChannel.send({
+          content: `<@${userId}> Welcome to your support ticket. A staff member will assist you shortly.`,
+          components: [helpRow]
+        });
 
         const updatedRow = new ActionRowBuilder().addComponents(
           ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
-          ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
+          ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true),
+          ButtonBuilder.from(interaction.message.components[0].components[2]).setDisabled(true)
         );
         await interaction.message.edit({ components: [updatedRow] });
 
@@ -243,7 +260,8 @@ client.on('interactionCreate', async interaction => {
 
         const updatedRow = new ActionRowBuilder().addComponents(
           ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
-          ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
+          ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true),
+          ButtonBuilder.from(interaction.message.components[0].components[2]).setDisabled(true)
         );
         await interaction.message.edit({ components: [updatedRow], embeds: [embed_] });
 
@@ -254,6 +272,42 @@ client.on('interactionCreate', async interaction => {
         }
 
         await interaction.followUp({ content: `Ticket #${ticketNum} closed.`, ephemeral: true });
+      }
+
+      if (action === 'help') {
+        await interaction.deferUpdate();
+
+        const ticketChannel = interaction.guild.channels.cache.find(c => c.name === `ticket-${ticketNum}`);
+
+        if (ticketChannel) {
+          await ticketChannel.permissionOverwrites.create(SUPPORT_ROLE_ID, {
+            ViewChannel: true,
+            SendMessages: true,
+            ReadMessageHistory: true
+          });
+
+          await ticketChannel.send({ content: `<@&${SUPPORT_ROLE_ID}> Help has been requested in this ticket.` });
+
+          const updatedRow = new ActionRowBuilder().addComponents(
+            ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
+            ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true),
+            ButtonBuilder.from(interaction.message.components[0].components[2]).setDisabled(true)
+          );
+          await interaction.message.edit({ components: [updatedRow] });
+
+          await interaction.followUp({ content: `Support role now has access to ticket #${ticketNum}.`, ephemeral: true });
+        } else {
+          await interaction.channel.send({ content: `<@&${SUPPORT_ROLE_ID}> Help has been requested for Ticket #${ticketNum}. Please claim this ticket to assist.` });
+
+          const updatedRow = new ActionRowBuilder().addComponents(
+            ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
+            ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true),
+            ButtonBuilder.from(interaction.message.components[0].components[2]).setDisabled(true)
+          );
+          await interaction.message.edit({ components: [updatedRow] });
+
+          await interaction.followUp({ content: `Support role has been notified for ticket #${ticketNum}.`, ephemeral: true });
+        }
       }
       return;
     }
