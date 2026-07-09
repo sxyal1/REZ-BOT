@@ -166,16 +166,11 @@ client.on('interactionCreate', async interaction => {
           new ButtonBuilder()
             .setCustomId(`ticket_claim_${interaction.user.id}_${ticketNum}`)
             .setStyle(ButtonStyle.Primary)
-            .setLabel('Открыть тикет'),
+            .setLabel('Claim'),
           new ButtonBuilder()
             .setCustomId(`ticket_close_${interaction.user.id}_${ticketNum}`)
             .setStyle(ButtonStyle.Danger)
-            .setLabel('Закрыть тикет'),
-          new ButtonBuilder()
-            .setCustomId(`ticket_help_${interaction.user.id}_${ticketNum}`)
-            .setStyle(ButtonStyle.Secondary)
-            .setLabel('Запросить помощь')
-            .setEmoji('🆘')
+            .setLabel('Close')
         );
 
         const channel = await client.channels.fetch(CHANNELS.reports).catch(() => null);
@@ -218,8 +213,7 @@ client.on('interactionCreate', async interaction => {
           new ButtonBuilder()
             .setCustomId(`ticket_help_${userId}_${ticketNum}`)
             .setStyle(ButtonStyle.Secondary)
-            .setLabel('Запросить помощь')
-            .setEmoji('🆘')
+            .setLabel('Request Help')
         );
 
         await ticketChannel.send({
@@ -229,8 +223,7 @@ client.on('interactionCreate', async interaction => {
 
         const updatedRow = new ActionRowBuilder().addComponents(
           ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
-          ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true),
-          ButtonBuilder.from(interaction.message.components[0].components[2]).setDisabled(true)
+          ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
         );
         await interaction.message.edit({ components: [updatedRow] });
 
@@ -260,8 +253,7 @@ client.on('interactionCreate', async interaction => {
 
         const updatedRow = new ActionRowBuilder().addComponents(
           ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
-          ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true),
-          ButtonBuilder.from(interaction.message.components[0].components[2]).setDisabled(true)
+          ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
         );
         await interaction.message.edit({ components: [updatedRow], embeds: [embed_] });
 
@@ -289,9 +281,7 @@ client.on('interactionCreate', async interaction => {
           await ticketChannel.send({ content: `<@&${SUPPORT_ROLE_ID}> Help has been requested in this ticket.` });
 
           const updatedRow = new ActionRowBuilder().addComponents(
-            ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
-            ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true),
-            ButtonBuilder.from(interaction.message.components[0].components[2]).setDisabled(true)
+            ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true)
           );
           await interaction.message.edit({ components: [updatedRow] });
 
@@ -300,9 +290,7 @@ client.on('interactionCreate', async interaction => {
           await interaction.channel.send({ content: `<@&${SUPPORT_ROLE_ID}> Help has been requested for Ticket #${ticketNum}. Please claim this ticket to assist.` });
 
           const updatedRow = new ActionRowBuilder().addComponents(
-            ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
-            ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true),
-            ButtonBuilder.from(interaction.message.components[0].components[2]).setDisabled(true)
+            ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true)
           );
           await interaction.message.edit({ components: [updatedRow] });
 
