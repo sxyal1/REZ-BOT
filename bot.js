@@ -16,7 +16,8 @@ const CHANNELS = {
   curator: process.env.CH_CURATOR || '1523738807533437128',
   reports: '1524186097180086355',
   supportStats: '1524198456607117332',
-  modStats: '1523152195523186739'
+  modStats: '1523152195523186739',
+  vacation: '1524846250854318140'
 };
 
 const ROLE_NAMES = {
@@ -223,6 +224,89 @@ app.post('/apply', async (req, res) => {
   } catch (e) {
     console.error('/apply error:', e);
     res.json({ ok: false, error: 'Ошибка сервера' });
+  }
+});
+
+app.post('/vacation', async (req, res) => {
+  try {
+    const { discord, dateFrom, dateTo, reason } = req.body;
+    if (!discord || !dateFrom || !dateTo) {
+      return res.json({ ok: false, error: 'Заполните все обязательные поля' });
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('Заявка на отпуск')
+      .setColor(0xf87171)
+      .addFields(
+        { name: 'Discord', value: discord, inline: true },
+        { name: 'С', value: dateFrom, inline: true },
+        { name: 'По', value: dateTo, inline: true },
+        { name: 'Причина', value: reason || '—' }
+      )
+      .setTimestamp();
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`vac_accept_${discord.replace(/[^a-zA-Z0-9_]/g, '')}_${Date.now()}`)
+        .setStyle(ButtonStyle.Success)
+        .setLabel('Принять'),
+      new ButtonBuilder()
+        .setCustomId(`vac_reject_${discord.replace(/[^a-zA-Z0-9_]/g, '')}_${Date.now()}`)
+        .setStyle(ButtonStyle.Danger)
+        .setLabel('Отклонить')
+    );
+
+    const channel = await client.channels.fetch(CHANNELS.vacation);
+    if (!channel) return res.json({ ok: false, error: 'Канал не найден' });
+
+    await channel.send({ embeds: [embed], components: [row] });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('/vacation error:', e);
+    res.json({ ok: false, error: 'Ошибка сервера' });
+  }
+});
+
+app.get('/api/voice', async (req, res) => {
+  try {
+    const today = getTodayKey();
+    const guild = await client.guilds.fetch(GUILD_ID);
+    const members = await guild.members.fetch();
+
+    const modMembers = members.filter(m => m.roles.cache.has(MOD_ROLE_ID));
+    const supportMembers = members.filter(m => m.roles.cache.has(SUPPORT_ROLE_ID));
+
+    const result = { mods: [], support: [], date: today };
+
+    for (const [, m] of modMembers) {
+      const d = voiceData[m.id];
+      const ms = d && d.daily[today] ? d.daily[today].ms : 0;
+      result.mods.push({
+        username: m.displayName || m.user.username,
+        avatar: m.user.displayAvatarURL({ dynamic: true }),
+        timeMs: ms,
+        sessions: d && d.daily[today] ? d.daily[today].sessions.length : 0
+      });
+    }
+
+    for (const [, m] of supportMembers) {
+      const d = voiceData[m.id];
+      const ms = d && d.daily[today] ? d.daily[today].ms : 0;
+      result.support.push({
+        username: m.displayName || m.user.username,
+        avatar: m.user.displayAvatarURL({ dynamic: true }),
+        timeMs: ms,
+        sessions: d && d.daily[today] ? d.daily[today].sessions.length : 0
+      });
+    }
+
+    result.mods.sort((a, b) => b.timeMs - a.timeMs);
+    result.support.sort((a, b) => b.timeMs - a.timeMs);
+
+    res.json(result);
+  } catch (e) {
+    console.error('/api/voice error:', e);
+    res.json({ mods: [], support: [], date: getTodayKey() });
   }
 });
 
@@ -540,6 +624,51 @@ client.on('interactionCreate', async interaction => {
 
           await interaction.followUp({ content: `Support role has been notified for ticket #${ticketNum}.`, ephemeral: true });
         }
+      }
+      return;
+    }
+
+    if (interaction.customId.startsWith('vac_')) {
+      const parts = interaction.customId.split('_');
+      const action = parts[1];
+      const discordName = parts[2];
+
+      await interaction.deferUpdate();
+
+      const old = interaction.message.embeds[0];
+
+      if (action === 'accept') {
+        const embed_ = EmbedBuilder.from(old)
+          .setColor(0x4ade80)
+          .setFooter({ text: `Принято: ${interaction.user.username}` })
+          .setTimestamp();
+
+        await interaction.message.edit({ embeds: [embed_] });
+
+        const updatedRow = new ActionRowBuilder().addComponents(
+          ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
+          ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
+        );
+        await interaction.message.edit({ components: [updatedRow] });
+
+        await interaction.followUp({ content: `Заявка на отпуск от **${discordName}** принята.`, ephemeral: true });
+      }
+
+      if (action === 'reject') {
+        const embed_ = EmbedBuilder.from(old)
+          .setColor(0x9ca3af)
+          .setFooter({ text: `Отклонено: ${interaction.user.username}` })
+          .setTimestamp();
+
+        await interaction.message.edit({ embeds: [embed_] });
+
+        const updatedRow = new ActionRowBuilder().addComponents(
+          ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
+          ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
+        );
+        await interaction.message.edit({ components: [updatedRow] });
+
+        await interaction.followUp({ content: `Заявка на отпуск от **${discordName}** отклонена.`, ephemeral: true });
       }
       return;
     }
