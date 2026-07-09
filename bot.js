@@ -131,11 +131,9 @@ client.once('ready', async () => {
 
   const commands = [
     new SlashCommandBuilder()
-      .setName('жалоба')
-      .setDescription('Пожаловаться на пользователя')
-      .addUserOption(o => o.setName('на_кого').setDescription('На кого жалоба').setRequired(true))
-      .addStringOption(o => o.setName('причина').setDescription('Причина жалобы').setRequired(true))
-      .addStringOption(o => o.setName('доказательства').setDescription('Ссылка на доказательства (скриншоты и т.д.)').setRequired(false))
+      .setName('ticket')
+      .setDescription('Create a support ticket')
+      .addStringOption(o => o.setName('description').setDescription('Describe your issue or question').setRequired(true))
   ];
 
   try {
@@ -149,37 +147,38 @@ client.once('ready', async () => {
 client.on('interactionCreate', async interaction => {
   try {
   if (interaction.isChatInputCommand()) {
-    if (interaction.commandName === 'жалоба') {
-      const target = interaction.options.getUser('на_кого');
-      const reason = interaction.options.getString('причина');
-      const evidence = interaction.options.getString('доказательства');
+    if (interaction.commandName === 'ticket') {
+      const description = interaction.options.getString('description');
       const ticketNum = nextTicket();
 
       const embed = new EmbedBuilder()
-        .setTitle(`Тикет — ${ticketNum}`)
+        .setTitle(`Ticket #${ticketNum}`)
         .setColor(0xf87171)
         .setDescription(
-          `Вопрос:\n${reason}\n\n` +
-          `Пользователь:\n• ${target}\n• Имя: ${target.username}\n• ID: ${target.id}\n\n` +
-          (evidence ? `Доказательства:\n${evidence}\n\n` : '') +
-          `Статус: Рассматривается`
+          `**Question:**\n${description}\n\n` +
+          `**User:**\n• ${interaction.user}\n• Name: ${interaction.user.username}\n• ID: ${interaction.user.id}\n\n` +
+          `**Status:** Open`
         )
-        .setThumbnail(target.displayAvatarURL({ dynamic: true }))
+        .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
         .setTimestamp();
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId(`rep_review_${interaction.user.id}_${target.id}_${ticketNum}`)
+          .setCustomId(`ticket_claim_${interaction.user.id}_${ticketNum}`)
           .setStyle(ButtonStyle.Primary)
-          .setLabel('Рассмотреть')
+          .setLabel('Claim'),
+        new ButtonBuilder()
+          .setCustomId(`ticket_close_${interaction.user.id}_${ticketNum}`)
+          .setStyle(ButtonStyle.Danger)
+          .setLabel('Close')
       );
 
       const channel = await client.channels.fetch(CHANNELS.reports).catch(() => null);
       if (channel) {
         await channel.send({ content: `<@&${MOD_ROLE_ID}>`, embeds: [embed], components: [row] });
-        await interaction.reply({ content: `Жалоба #${ticketNum} отправлена на рассмотрение.`, ephemeral: true });
+        await interaction.reply({ content: `Ticket #${ticketNum} created. Staff will respond soon.`, ephemeral: true });
       } else {
-        await interaction.reply({ content: 'Ошибка: канал для жалоб не найден.', ephemeral: true });
+        await interaction.reply({ content: 'Error: reports channel not found.', ephemeral: true });
       }
     }
     return;
@@ -187,25 +186,82 @@ client.on('interactionCreate', async interaction => {
 
   if (!interaction.isButton()) return;
 
-  if (interaction.customId.startsWith('rep_')) {
-    if (interaction.customId.startsWith('rep_review_')) {
+  if (interaction.customId.startsWith('ticket_')) {
+    const parts = interaction.customId.split('_');
+    const action = parts[1];
+    const userId = parts[2];
+    const ticketNum = parts[3];
+
+    if (action === 'claim') {
       await interaction.deferUpdate();
 
+      const guild = interaction.guild;
+      const category = guild.channels.cache.find(c => c.name.toLowerCase() === 'tickets' && c.type === 4);
+      
+      const ticketChannel = await guild.channels.create({
+        name: `ticket-${ticketNum}`,
+        type: 0,
+        parent: category ? category.id : null,
+        permissionOverwrites: [
+          { id: guild.id, deny: ['ViewChannel'] },
+          { id: userId, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+          { id: interaction.user.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+          { id: MOD_ROLE_ID, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] }
+        ]
+      });
+
+      await ticketChannel.send({ content: `<@${userId}> Welcome to your support ticket. A staff member will assist you shortly.` });
+
+      const closeRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`ticket_close_${userId}_${ticketNum}`)
+          .setStyle(ButtonStyle.Danger)
+          .setLabel('Close')
+      );
+
       const updatedRow = new ActionRowBuilder().addComponents(
-        ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true)
+        ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
+        ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
       );
       await interaction.message.edit({ components: [updatedRow] });
 
       const old = interaction.message.embeds[0];
       const newDesc = old.description
-        .replace(/Статус: Рассматривается/, `Статус: Завершен\nАгент: ${interaction.user.username}`);
+        .replace(/\*\*Status:\*\* Open/, `**Status:** Claimed\n**Agent:** ${interaction.user.username}\n**Channel:** <#${ticketChannel.id}>`);
 
       const embed_ = EmbedBuilder.from(old)
         .setDescription(newDesc)
         .setColor(0x4ade80);
 
       await interaction.message.edit({ embeds: [embed_] });
-      await interaction.followUp({ content: `Тикет рассмотрен модератором ${interaction.user}`, ephemeral: true });
+      await interaction.followUp({ content: `Ticket #${ticketNum} claimed. Channel ${ticketChannel} created.`, ephemeral: true });
+    }
+
+    if (action === 'close') {
+      await interaction.deferUpdate();
+
+      const old = interaction.message.embeds[0];
+      const newDesc = old.description
+        .replace(/\*\*Status:\*\* Open/, '**Status:** Closed')
+        .replace(/\*\*Status:\*\* Claimed/, '**Status:** Closed');
+
+      const embed_ = EmbedBuilder.from(old)
+        .setDescription(newDesc)
+        .setColor(0x9ca3af);
+
+      const updatedRow = new ActionRowBuilder().addComponents(
+        ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
+        ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
+      );
+      await interaction.message.edit({ components: [updatedRow], embeds: [embed_] });
+
+      const ticketChannel = interaction.guild.channels.cache.find(c => c.name === `ticket-${ticketNum}`);
+      if (ticketChannel) {
+        await ticketChannel.send({ content: 'This ticket has been closed by a staff member.' });
+        setTimeout(() => ticketChannel.delete().catch(() => {}), 5000);
+      }
+
+      await interaction.followUp({ content: `Ticket #${ticketNum} closed.`, ephemeral: true });
     }
     return;
   }
@@ -256,44 +312,4 @@ client.on('interactionCreate', async interaction => {
         ephemeral: true
       });
     }
-  } else if (action === 'reject') {
-    const rejectText =
-      `❌ **Ваша заявка на ${roleName} отклонена.**\n\n` +
-      `Спасибо за интерес, но мы решили выбрать другого кандидата.`;
-
-    const embed = new EmbedBuilder()
-      .setColor(0xf87171)
-      .setDescription(rejectText)
-      .setFooter({ text: `Отклонил: ${adminTag}` })
-      .setTimestamp();
-
-    const member = await findUserByDiscord(discordName, interaction.guild);
-    if (member) {
-      const sent = await sendDM(member.user.id, embed);
-      await interaction.followUp({
-        content: sent
-          ? `✅ Уведомление отправлено **${discordName}**`
-          : `⚠️ Не удалось отправить DM **${discordName}**`,
-        ephemeral: true
-      });
-    } else {
-      await interaction.followUp({
-        content: `⚠️ Пользователь **${discordName}** не найден. Отказ отправлен, но DM не доставлен.`,
-        ephemeral: true
-      });
-    }
-  }
-  } catch (e) {
-    console.error('Interaction error:', e);
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: 'Произошла ошибка.', ephemeral: true }).catch(() => {});
-    }
-  }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`HTTP сервер на порту ${PORT}`));
-
-client.login(TOKEN).catch(err => {
-  console.error('Discord login error:', err.message);
-});
+  } else if (action === '
