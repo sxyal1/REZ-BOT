@@ -30,7 +30,6 @@ const MOD_ROLE_ID = '1442598138761314376';
 const SUPPORT_ROLE_ID = '1524203277863096411';
 const TICKET_FILE = join(__dirname, 'ticket_counter.json');
 const VOICE_FILE = join(__dirname, 'voice_time.json');
-const ACTIVITY_FILE = join(__dirname, 'weekly_activity.json');
 
 let ticketCounter = 1;
 if (existsSync(TICKET_FILE)) {
@@ -50,47 +49,6 @@ if (existsSync(VOICE_FILE)) {
 
 function saveVoiceData() {
   writeFileSync(VOICE_FILE, JSON.stringify(voiceData, null, 2));
-}
-
-let weeklyActivity = {};
-if (existsSync(ACTIVITY_FILE)) {
-  try { weeklyActivity = JSON.parse(readFileSync(ACTIVITY_FILE, 'utf8')); } catch {}
-}
-
-function saveWeeklyActivity() {
-  writeFileSync(ACTIVITY_FILE, JSON.stringify(weeklyActivity, null, 2));
-}
-
-function getWeekKey() {
-  const now = new Date();
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-  return monday.toISOString().slice(0, 10);
-}
-
-function ensureWeek() {
-  const week = getWeekKey();
-  if (!weeklyActivity[week]) {
-    weeklyActivity = {};
-    weeklyActivity[week] = {};
-  }
-  return week;
-}
-
-function trackActivity(userId, username, type) {
-  const week = ensureWeek();
-  if (!weeklyActivity[week][userId]) {
-    weeklyActivity[week][userId] = { username, voice: false, chat: false, messages: 0 };
-  }
-  if (type === 'voice') {
-    weeklyActivity[week][userId].voice = true;
-  }
-  if (type === 'chat') {
-    weeklyActivity[week][userId].chat = true;
-    weeklyActivity[week][userId].messages++;
-  }
-  weeklyActivity[week][userId].username = username;
-  saveWeeklyActivity();
 }
 
 const voiceJoinTimes = {};
@@ -179,62 +137,6 @@ async function postStatsTable(roleId, channelId) {
       await channel.send({ embeds: [embed] }).catch(() => {});
     }
   }
-}
-
-async function buildActivityTable(guild) {
-  const week = getWeekKey();
-  const weekData = weeklyActivity[week] || {};
-
-  const members = await guild.members.fetch();
-  const filtered = members.filter(m => !m.user.bot);
-
-  const rows = [];
-  for (const [, member] of {
-    ...Object.fromEntries(filtered)
-  }) {
-    const data = weekData[member.id];
-    const username = member.displayName || member.user.username;
-    const hasVoice = data?.voice || false;
-    const hasChat = data?.chat || false;
-    const messages = data?.messages || 0;
-
-    const voiceTime = voiceData[member.id]?.daily
-      ? Object.entries(voiceData[member.id].daily)
-          .filter(([date]) => date >= week)
-          .reduce((sum, [, d]) => sum + d.ms, 0)
-      : 0;
-
-    rows.push({
-      username,
-      voice: hasVoice ? '+' : '—',
-      chat: hasChat ? '+' : '—',
-      messages,
-      voiceTime: formatDuration(voiceTime)
-    });
-  }
-
-  rows.sort((a, b) => a.username.localeCompare(b.username));
-
-  const activeVoice = rows.filter(r => r.voice === '+').length;
-  const activeChat = rows.filter(r => r.chat === '+').length;
-  const total = rows.length;
-
-  return { rows, week, activeVoice, activeChat, total };
-}
-
-function splitMessage(text, maxLen = 4000) {
-  const chunks = [];
-  let current = '';
-  for (const line of text.split('\n')) {
-    if ((current + '\n' + line).length > maxLen && current) {
-      chunks.push(current);
-      current = line;
-    } else {
-      current = current ? current + '\n' + line : line;
-    }
-  }
-  if (current) chunks.push(current);
-  return chunks;
 }
 
 let client;
@@ -408,32 +310,18 @@ app.get('/api/voice', async (req, res) => {
   }
 });
 
-app.get('/api/activity', async (req, res) => {
-  try {
-    const guild = await client.guilds.fetch(GUILD_ID);
-    const { rows, week, activeVoice, activeChat, total } = await buildActivityTable(guild);
-    res.json({ rows, week, activeVoice, activeChat, total });
-  } catch (e) {
-    console.error('/api/activity error:', e);
-    res.json({ rows: [], week: getWeekKey(), activeVoice: 0, activeChat: 0, total: 0 });
-  }
-});
-
 client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildVoiceStates,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.GuildVoiceStates
   ]
 });
 
 client.once('ready', async () => {
   console.log(`Bot started as ${client.user.tag}`);
   console.log(`Guild: ${GUILD_ID}`);
-
-  ensureWeek();
 
   const commands = [
     new SlashCommandBuilder()
@@ -443,10 +331,7 @@ client.once('ready', async () => {
     new SlashCommandBuilder()
       .setName('voicestats')
       .setDescription('Show voice channel time stats for support and admin')
-      .addUserOption(o => o.setName('user').setDescription('Check specific user (optional)').setRequired(false)),
-    new SlashCommandBuilder()
-      .setName('activity')
-      .setDescription('Показать таблицу активности всех участников за неделю')
+      .addUserOption(o => o.setName('user').setDescription('Check specific user (optional)').setRequired(false))
   ];
 
   try {
@@ -457,17 +342,6 @@ client.once('ready', async () => {
   }
 });
 
-client.on('messageCreate', async (message) => {
-  try {
-    if (message.author.bot) return;
-    if (message.guild?.id !== GUILD_ID) return;
-
-    trackActivity(message.author.id, message.author.username || message.member?.displayName, 'chat');
-  } catch (e) {
-    console.error('Message tracking error:', e);
-  }
-});
-
 client.on('voiceStateUpdate', async (oldState, newState) => {
   try {
     const member = newState.member || oldState.member;
@@ -475,6 +349,8 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
     const hasMod = member.roles.cache.has(MOD_ROLE_ID);
     const hasSupport = member.roles.cache.has(SUPPORT_ROLE_ID);
+    if (!hasMod && !hasSupport) return;
+
     const userId = member.id;
 
     if (!voiceData[userId]) {
@@ -487,7 +363,6 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
     if (!wasInVoice && isInVoice) {
       voiceJoinTimes[userId] = Date.now();
-      trackActivity(userId, member.user.username || member.displayName, 'voice');
     }
 
     if (wasInVoice && !isInVoice) {
@@ -617,69 +492,6 @@ client.on('interactionCreate', async interaction => {
             .setTimestamp();
 
           await interaction.reply({ embeds: [embed], ephemeral: true });
-        }
-      }
-
-      if (interaction.commandName === 'activity') {
-        await interaction.deferReply();
-
-        try {
-          const guild = interaction.guild;
-          const { rows, week, activeVoice, activeChat, total } = await buildActivityTable(guild);
-
-          if (rows.length === 0) {
-            await interaction.editReply({ content: 'Нет данных об участниках.' });
-            return;
-          }
-
-          const header = [
-            '```',
-            '╔══════╦══════════════════════════════╦═══════════╦═══════════╦══════════╗',
-            '║  №   ║ Никнейм                      ║   Войс    ║   Чат    ║ Сообщ.   ║',
-            '╠══════╬══════════════════════════════╬═══════════╬═══════════╬══════════╣'
-          ];
-
-          const lines = rows.map((r, i) => {
-            const num = String(i + 1).padStart(4);
-            const name = r.username.substring(0, 26).padEnd(28);
-            const voice = `  ${r.voice}   `.substring(0, 7);
-            const chat = `  ${r.chat}   `.substring(0, 7);
-            const msgs = String(r.messages).padStart(6);
-            return `║ ${num} ║ ${name} ║ ${voice} ║ ${chat} ║ ${msgs}   ║`;
-          });
-
-          const footer = [
-            '╚══════╩══════════════════════════════╩═══════════╩═══════════╩══════════╝',
-            '```'
-          ];
-
-          const allLines = [...header, ...lines, ...footer];
-          const text = allLines.join('\n');
-
-          const chunks = splitMessage(text);
-
-          const summaryEmbed = new EmbedBuilder()
-            .setTitle(`📊 Таблица активности — Неделя с ${week}`)
-            .setColor(0x5865f2)
-            .setDescription(
-              `**Всего участников:** ${total}\n` +
-              `**Активны в войсе:** ${activeVoice}\n` +
-              `**Активны в чате:** ${activeChat}\n\n` +
-              `🟢 **+** = активен за неделю\n` +
-              `⚪ **—** = не активен`
-            )
-            .setTimestamp();
-
-          await interaction.editReply({ content: chunks[0] });
-
-          for (let i = 1; i < chunks.length; i++) {
-            await interaction.followUp({ content: chunks[i] });
-          }
-
-          await interaction.followUp({ embeds: [summaryEmbed] });
-        } catch (e) {
-          console.error('Activity error:', e);
-          await interaction.editReply({ content: 'Ошибка при генерации таблицы.' });
         }
       }
       return;
@@ -968,4 +780,3 @@ app.listen(PORT, () => console.log(`HTTP server on port ${PORT}`));
 client.login(TOKEN).catch(err => {
   console.error('Discord login error:', err.message);
 });
-
