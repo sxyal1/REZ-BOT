@@ -36,6 +36,7 @@ const VOICE_FILE = join(DATA_DIR, 'voice_time.json');
 const CURRENCY_FILE = join(DATA_DIR, 'currency.json');
 const GIVEAWAY_FILE = join(DATA_DIR, 'giveaways.json');
 const REACTION_ROLES_FILE = join(DATA_DIR, 'reaction_roles.json');
+const WELCOME_FILE = join(DATA_DIR, 'welcome_config.json');
 
 function loadJSON(file, fallback) {
   if (existsSync(file)) {
@@ -59,11 +60,105 @@ let voiceData = loadJSON(VOICE_FILE, {});
 let currencyData = loadJSON(CURRENCY_FILE, {});
 let giveawayData = loadJSON(GIVEAWAY_FILE, { active: [], ended: [] });
 let reactionRoleData = loadJSON(REACTION_ROLES_FILE, {});
+let welcomeData = loadJSON(WELCOME_FILE, {});
 
 function saveVoiceData() { saveJSON(VOICE_FILE, voiceData); }
 function saveCurrencyData() { saveJSON(CURRENCY_FILE, currencyData); }
 function saveGiveawayData() { saveJSON(GIVEAWAY_FILE, giveawayData); }
 function saveReactionRoleData() { saveJSON(REACTION_ROLES_FILE, reactionRoleData); }
+function saveWelcomeData() { saveJSON(WELCOME_FILE, welcomeData); }
+
+const DEFAULT_WELCOME_IMAGE = 'https://i.pinimg.com/originals/d8/0e/b3/d80eb3916a578456d5d8114a58c84e7b.gif';
+
+const WELCOME_DEFAULTS = {
+  enabled: true,
+  channelId: CHANNELS.welcome || null,
+  title: '{displayname} | Добро пожаловать!',
+  description: '**{username}**, мы рады видеть тебя на **{server}**!\nТы наш **{memberCount}** участник.\n\n> Приятного общения и не забудь ознакомиться с правилами!',
+  color: '#60a5fa',
+  image: DEFAULT_WELCOME_IMAGE,
+  thumbnail: true,
+  footer: 'REZ · Приветствие',
+  buttons: [{ label: 'Правила', url: INVITE }]
+};
+
+function getWelcomeConfig(guildId) {
+  const saved = welcomeData[guildId] || {};
+  return {
+    ...WELCOME_DEFAULTS,
+    ...saved,
+    buttons: Array.isArray(saved.buttons) ? saved.buttons : WELCOME_DEFAULTS.buttons
+  };
+}
+
+function setWelcomeConfig(guildId, cfg) {
+  welcomeData[guildId] = cfg;
+  saveWelcomeData();
+}
+
+function ordinalSuffix(n) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'st';
+  if (mod10 === 2 && mod100 !== 12) return 'nd';
+  if (mod10 === 3 && mod100 !== 13) return 'rd';
+  return 'th';
+}
+
+function formatWelcomeText(text, member) {
+  const count = member.guild.memberCount;
+  return String(text ?? '')
+    .replace(/\{user\}/g, `<@${member.id}>`)
+    .replace(/\{mention\}/g, `<@${member.id}>`)
+    .replace(/\{username\}/g, member.user.username)
+    .replace(/\{displayname\}/g, member.displayName)
+    .replace(/\{server\}/g, member.guild.name)
+    .replace(/\{memberCount\}/g, String(count))
+    .replace(/\{memberCountOrdinal\}/g, `${count}${ordinalSuffix(count)}`)
+    .replace(/\{id\}/g, member.id);
+}
+
+function parseColor(hex) {
+  const value = parseInt(String(hex || '').replace('#', ''), 16);
+  return Number.isNaN(value) ? 0x60a5fa : value;
+}
+
+function buildWelcomePayload(member, cfg) {
+  const title = formatWelcomeText(cfg.title, member).substring(0, 256);
+  const description = formatWelcomeText(cfg.description, member).substring(0, 4096);
+
+  const embed = new EmbedBuilder()
+    .setTitle(title || 'Добро пожаловать!')
+    .setDescription(description || null)
+    .setColor(parseColor(cfg.color))
+    .setTimestamp();
+
+  if (cfg.thumbnail !== false) {
+    embed.setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }));
+  }
+  if (cfg.image) embed.setImage(cfg.image);
+  if (cfg.footer) embed.setFooter({ text: formatWelcomeText(cfg.footer, member).substring(0, 2048) });
+
+  const components = [];
+  const buttons = (Array.isArray(cfg.buttons) ? cfg.buttons : [])
+    .filter(b => b && b.label && b.url && /^https?:\/\//i.test(b.url))
+    .slice(0, 5);
+
+  if (buttons.length > 0) {
+    const row = new ActionRowBuilder();
+    for (const b of buttons) {
+      row.addComponents(
+        new ButtonBuilder()
+          .setStyle(ButtonStyle.Link)
+          .setLabel(String(b.label).substring(0, 80))
+          .setURL(b.url)
+      );
+    }
+    components.push(row);
+  }
+
+  return { embeds: [embed], components };
+}
 
 const voiceJoinTimes = {};
 const VOICE_NORM_MS = 2 * 60 * 60 * 1000;
@@ -399,7 +494,32 @@ client.once('ready', async () => {
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .addStringOption(o => o.setName('title').setDescription('Embed title').setRequired(true))
       .addStringOption(o => o.setName('description').setDescription('Embed description (use {user} for mention)').setRequired(true))
-      .addStringOption(o => o.setName('color').setDescription('Hex color (e.g. #ff0000)').setRequired(false))
+      .addStringOption(o => o.setName('color').setDescription('Hex color (e.g. #ff0000)').setRequired(false)),
+
+    new SlashCommandBuilder()
+      .setName('welcome-setup')
+      .setDescription('Настроить приветствие новых участников')
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addChannelOption(o => o.setName('channel').setDescription('Канал, куда слать приветствие').setRequired(true))
+      .addStringOption(o => o.setName('title').setDescription('Заголовок. Переменные: {displayname} {username} {server} {memberCount}').setRequired(false))
+      .addStringOption(o => o.setName('description').setDescription('Текст. Переменные: {user} {username} {server} {memberCount}').setRequired(false))
+      .addStringOption(o => o.setName('image').setDescription('Ссылка на GIF/картинку (image - убрать)').setRequired(false))
+      .addStringOption(o => o.setName('color').setDescription('Цвет в формате #60a5fa').setRequired(false))
+      .addStringOption(o => o.setName('button_label').setDescription('Текст кнопки (напр. Правила)').setRequired(false))
+      .addStringOption(o => o.setName('button_url').setDescription('Ссылка кнопки (https://...)').setRequired(false))
+      .addBooleanOption(o => o.setName('enabled').setDescription('Включить или выключить приветствие').setRequired(false))
+      .addBooleanOption(o => o.setName('preview').setDescription('Отправить тестовое приветствие в канал').setRequired(false)),
+
+    new SlashCommandBuilder()
+      .setName('welcome-test')
+      .setDescription('Показать, как будет выглядеть приветствие')
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addChannelOption(o => o.setName('channel').setDescription('Куда отправить тест (по умолчанию — настроенный канал)').setRequired(false)),
+
+    new SlashCommandBuilder()
+      .setName('welcome-show')
+      .setDescription('Показать текущие настройки приветствия')
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   ];
 
   try {
@@ -416,26 +536,18 @@ client.on('guildMemberAdd', async (member) => {
       await member.roles.add(WELCOME_ROLE_ID).catch(() => {});
     }
 
-    const channel = await client.channels.fetch(CHANNELS.welcome).catch(() => null);
+    const cfg = getWelcomeConfig(member.guild.id);
+    if (!cfg.enabled) return;
+
+    const channelId = cfg.channelId || CHANNELS.welcome;
+    if (!channelId) return;
+
+    const channel = member.guild.channels.cache.get(channelId)
+      || await client.channels.fetch(channelId).catch(() => null);
     if (!channel) return;
 
-    const memberCount = member.guild.memberCount;
-    const ordinal = memberCount % 10 === 1 && memberCount % 100 !== 11 ? 'st' :
-                    memberCount % 10 === 2 && memberCount % 100 !== 12 ? 'nd' :
-                    memberCount % 10 === 3 && memberCount % 100 !== 13 ? 'rd' : 'th';
-
-    const embed = new EmbedBuilder()
-      .setTitle(`Welcome to ${member.guild.name}!`)
-      .setDescription(
-        `Hey ${member}, welcome to **${member.guild.name}**!\n\n` +
-        `You are our **${memberCount}${ordinal}** member.\n\n` +
-        `> Enjoy your stay and check out the rules!`
-      )
-      .setColor(0x60a5fa)
-      .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
-      .setTimestamp();
-
-    await channel.send({ embeds: [embed] });
+    const payload = buildWelcomePayload(member, cfg);
+    await channel.send(payload);
   } catch (e) {
     console.error('Welcome error:', e);
   }
@@ -1053,7 +1165,9 @@ client.on('interactionCreate', async interaction => {
         const colorHex = interaction.options.getString('color') || '#60a5fa';
         const color = parseInt(colorHex.replace('#', ''), 16) || 0x60a5fa;
 
-        const channel = await client.channels.fetch(CHANNELS.welcome).catch(() => null);
+        const cfg = getWelcomeConfig(interaction.guild.id);
+        const channelId = cfg.channelId || CHANNELS.welcome;
+        const channel = await client.channels.fetch(channelId).catch(() => null);
         if (!channel) {
           await interaction.reply({ content: 'Welcome channel not found.', ephemeral: true });
           return;
@@ -1067,6 +1181,114 @@ client.on('interactionCreate', async interaction => {
 
         await channel.send({ embeds: [embed] });
         await interaction.reply({ content: 'Welcome embed sent!', ephemeral: true });
+      }
+
+      if (commandName === 'welcome-setup') {
+        const guildId = interaction.guild.id;
+        const cfg = getWelcomeConfig(guildId);
+
+        const channel = interaction.options.getChannel('channel');
+        if (channel) cfg.channelId = channel.id;
+
+        const title = interaction.options.getString('title');
+        if (title !== null) cfg.title = title;
+
+        const description = interaction.options.getString('description');
+        if (description !== null) cfg.description = description;
+
+        const image = interaction.options.getString('image');
+        if (image !== null) {
+          const value = image.trim();
+          cfg.image = /^(none|off|убрать|-)$/i.test(value) ? '' : value;
+        }
+
+        const color = interaction.options.getString('color');
+        if (color !== null) cfg.color = color.trim();
+
+        const buttonLabel = interaction.options.getString('button_label');
+        const buttonUrl = interaction.options.getString('button_url');
+        if (buttonLabel !== null || buttonUrl !== null) {
+          const old = (cfg.buttons && cfg.buttons[0]) || {};
+          const label = buttonLabel !== null ? buttonLabel : (old.label || 'Правила');
+          const url = buttonUrl !== null ? buttonUrl : (old.url || INVITE);
+          cfg.buttons = [{ label, url }];
+        }
+
+        const enabled = interaction.options.getBoolean('enabled');
+        if (enabled !== null) cfg.enabled = enabled;
+
+        setWelcomeConfig(guildId, cfg);
+
+        const summary = new EmbedBuilder()
+          .setTitle('Приветствие настроено')
+          .setColor(0x4ade80)
+          .addFields(
+            { name: 'Сервер', value: interaction.guild.name, inline: true },
+            { name: 'Канал', value: cfg.channelId ? `<#${cfg.channelId}>` : '—', inline: true },
+            { name: 'Включено', value: cfg.enabled ? '✅ Да' : '❌ Нет', inline: true },
+            { name: 'Заголовок', value: String(cfg.title || '—').substring(0, 1024) },
+            { name: 'Текст', value: String(cfg.description || '—').substring(0, 1024) },
+            { name: 'Картинка/GIF', value: cfg.image ? String(cfg.image).substring(0, 1024) : '—' },
+            { name: 'Цвет', value: String(cfg.color || '—'), inline: true },
+            {
+              name: 'Кнопка',
+              value: cfg.buttons && cfg.buttons[0]
+                ? `[${cfg.buttons[0].label}](${cfg.buttons[0].url})`
+                : '—',
+              inline: true
+            }
+          )
+          .setFooter({ text: 'Переменные: {user} {username} {displayname} {server} {memberCount} {id}' })
+          .setTimestamp();
+
+        await interaction.reply({ embeds: [summary], ephemeral: true });
+
+        const preview = interaction.options.getBoolean('preview');
+        if (preview && cfg.enabled) {
+          const target = interaction.guild.channels.cache.get(cfg.channelId) || interaction.channel;
+          await target.send(buildWelcomePayload(interaction.member, cfg)).catch(() => {});
+        }
+      }
+
+      if (commandName === 'welcome-test') {
+        const cfg = getWelcomeConfig(interaction.guild.id);
+        const channelOption = interaction.options.getChannel('channel');
+        const target = channelOption
+          || interaction.guild.channels.cache.get(cfg.channelId)
+          || interaction.channel;
+
+        if (!target || !target.isTextBased?.()) {
+          await interaction.reply({ content: 'Канал не найден или не текстовый.', ephemeral: true });
+          return;
+        }
+
+        await target.send(buildWelcomePayload(interaction.member, cfg));
+        await interaction.reply({ content: `Тестовое приветствие отправлено в ${target}.`, ephemeral: true });
+      }
+
+      if (commandName === 'welcome-show') {
+        const cfg = getWelcomeConfig(interaction.guild.id);
+        const summary = new EmbedBuilder()
+          .setTitle('Настройки приветствия')
+          .setColor(0x60a5fa)
+          .addFields(
+            { name: 'Сервер', value: interaction.guild.name, inline: true },
+            { name: 'Канал', value: cfg.channelId ? `<#${cfg.channelId}>` : '—', inline: true },
+            { name: 'Включено', value: cfg.enabled ? '✅ Да' : '❌ Нет', inline: true },
+            { name: 'Заголовок', value: String(cfg.title || '—').substring(0, 1024) },
+            { name: 'Текст', value: String(cfg.description || '—').substring(0, 1024) },
+            { name: 'Картинка/GIF', value: cfg.image ? String(cfg.image).substring(0, 1024) : '—' },
+            { name: 'Цвет', value: String(cfg.color || '—'), inline: true },
+            {
+              name: 'Кнопка',
+              value: cfg.buttons && cfg.buttons[0]
+                ? `[${cfg.buttons[0].label}](${cfg.buttons[0].url})`
+                : '—',
+              inline: true
+            }
+          )
+          .setFooter({ text: 'Настройка: /welcome-setup · Тест: /welcome-test' });
+        await interaction.reply({ embeds: [summary], ephemeral: true });
       }
 
       return;
