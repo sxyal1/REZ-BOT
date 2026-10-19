@@ -17,7 +17,7 @@ const CHANNELS = {
   supportStats: '1524198456607117332',
   modStats: '1523152195523186739',
   vacation: '1524846250854318140',
-  welcome: process.env.CH_WELCOME || '1442592660853625043',
+  welcome: process.env.CH_WELCOME || '1557768085258375220',
   shop: process.env.CH_SHOP || null
 };
 
