@@ -273,7 +273,32 @@ app.use((req, res, next) => {
 });
 
 app.get('/', (req, res) => res.send('OK'));
-
+app.get('/diag', (req, res) => {
+  const out = {};
+  const to = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout ' + ms + 'ms')), ms));
+  (async () => {
+    try {
+      const dns = await import('dns');
+      out.dns_discord = await Promise.race([dns.promises.lookup('discord.com').then(r => r.address), to(8000)]);
+    } catch (e) { out.dns_discord = 'FAIL: ' + e.message; }
+    try {
+      const net = await import('net');
+      out.tcp443 = await new Promise(r => {
+        const s = net.connect({ host: '162.159.128.233', port: 443 });
+        s.setTimeout(8000, () => { s.destroy(); r('TIMEOUT'); });
+        s.on('connect', () => { s.end(); r('OK'); });
+        s.on('error', e => r('ERR: ' + e.message));
+      });
+    } catch (e) { out.tcp443 = 'FAIL: ' + e.message; }
+    try {
+      out.https_discord = await Promise.race([fetch('https://discord.com/api/v10/gateway').then(r => 'HTTP ' + r.status), to(8000)]);
+    } catch (e) { out.https_discord = 'FAIL: ' + e.message; }
+    try {
+      out.https_other = await Promise.race([fetch('https://example.com').then(r => 'HTTP ' + r.status), to(8000)]);
+    } catch (e) { out.https_other = 'FAIL: ' + e.message; }
+    res.json(out);
+  })();
+});
 app.post('/apply', async (req, res) => {
   try {
     const { role, name, discord, age, experience, reason, extra } = req.body;
