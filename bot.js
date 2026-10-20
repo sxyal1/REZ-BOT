@@ -12,18 +12,22 @@ const INVITE = process.env.INVITE_URL || 'https://discord.gg/uSSGpABkMT';
 
 const CHANNELS = {
   helper: process.env.CH_HELPER || '1536510809981845686',
-  moderator: process.env.CH_MODERATOR || '1536510900742127787',
+  moderator: process.env.CH_MODERATOR || '1562187545352081418',
+  support: process.env.CH_SUPPORT || '1562187462288216184',
+  curator: process.env.CH_CURATOR || '1562187607687827657',
   reports: '1524186097180086355',
   supportStats: '1524198456607117332',
   modStats: '1523152195523186739',
-  vacation: '1524846250854318140',
+  vacation: process.env.CH_VACATION || '1562188542556246148',
   welcome: process.env.CH_WELCOME || '1557768085258375220',
   shop: process.env.CH_SHOP || null
 };
 
 const ROLE_NAMES = {
-  helper: 'Helper',
-  moderator: 'Moderator'
+  helper: 'Хелпер',
+  moderator: 'модератора',
+  support: 'саппорт',
+  curator: 'ассистента куратора'
 };
 
 const MOD_ROLE_ID = '1442598138761314376';
@@ -68,7 +72,7 @@ function saveGiveawayData() { saveJSON(GIVEAWAY_FILE, giveawayData); }
 function saveReactionRoleData() { saveJSON(REACTION_ROLES_FILE, reactionRoleData); }
 function saveWelcomeData() { saveJSON(WELCOME_FILE, welcomeData); }
 
-const DEFAULT_WELCOME_IMAGE = 'https://i.pinimg.com/originals/d8/0e/b3/d80eb3916a578456d5d8114a58c84e7b.gif';
+const DEFAULT_WELCOME_IMAGE = 'https://i.gifer.com/5ufw.gif';
 
 const WELCOME_DEFAULTS = {
   enabled: true,
@@ -78,8 +82,8 @@ const WELCOME_DEFAULTS = {
   color: '#60a5fa',
   image: DEFAULT_WELCOME_IMAGE,
   thumbnail: true,
-  footer: 'REZ · Приветствие',
-  buttons: [{ label: 'Правила', url: INVITE }]
+  footer: 'REALM · Приветствие',
+  buttons: [{ label: 'Правила', url: 'https://discord.com/channels/1534303697645998330/1557774125970227270' }]
 };
 
 function getWelcomeConfig(guildId) {
@@ -299,10 +303,13 @@ app.get('/diag', (req, res) => {
     res.json(out);
   })();
 });
+
+
 app.post('/apply', async (req, res) => {
   try {
     const { role, name, discord, age, experience, reason, extra } = req.body;
     if (!role || !name || !discord) return res.json({ ok: false, error: 'Заполните имя и Discord' });
+    if (!['moderator', 'support', 'curator'].includes(role) || !CHANNELS[role]) return res.json({ ok: false, error: 'Неизвестная роль' });
 
     const embed = new EmbedBuilder()
       .setTitle(`Новая заявка на ${ROLE_NAMES[role] || role}`)
@@ -315,14 +322,14 @@ app.post('/apply', async (req, res) => {
         { name: 'Почему', value: reason || '—' },
         { name: 'Дополнительно', value: extra || '—' }
       )
-      .setFooter({ text: 'REZ · Заявки' })
+      .setFooter({ text: 'RealMord · Заявки' })
       .setTimestamp(new Date());
 
     const safeTag = discord.replace(/[^a-zA-Z0-9_#]/g, '').substring(0, 32);
     const timestamp = Date.now();
     const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`a_${role}_${safeTag}_${timestamp}`).setStyle(ButtonStyle.Secondary).setEmoji('✅'),
-      new ButtonBuilder().setCustomId(`r_${role}_${safeTag}_${timestamp}`).setStyle(ButtonStyle.Secondary).setEmoji('❌')
+      new ButtonBuilder().setCustomId(`a_${role}_${safeTag}_${timestamp}`).setStyle(ButtonStyle.Success).setLabel('Принять'),
+      new ButtonBuilder().setCustomId(`r_${role}_${safeTag}_${timestamp}`).setStyle(ButtonStyle.Danger).setLabel('Отклонить')
     );
 
     const channel = await client.channels.fetch(CHANNELS[role]);
@@ -555,24 +562,33 @@ client.once('ready', async () => {
   }
 });
 
+client.on('shardDisconnect', () => console.log('GATEWAY: disconnected'));
+client.on('shardReconnecting', () => console.log('GATEWAY: reconnecting...'));
+client.on('shardResume', () => console.log('GATEWAY: resumed'));
+client.on('invalidated', () => console.log('GATEWAY: session invalidated'));
+client.on('warn', (m) => console.log('WARN:', m));
+client.on('error', (e) => console.log('CLIENT ERROR:', e.message));
+
 client.on('guildMemberAdd', async (member) => {
+  console.log('JOIN event:', member.user.tag, 'in', member.guild?.name);
   try {
     if (WELCOME_ROLE_ID) {
       await member.roles.add(WELCOME_ROLE_ID).catch(() => {});
     }
 
     const cfg = getWelcomeConfig(member.guild.id);
-    if (!cfg.enabled) return;
+    if (!cfg.enabled) { console.log('welcome: disabled, skip'); return; }
 
     const channelId = cfg.channelId || CHANNELS.welcome;
-    if (!channelId) return;
+    if (!channelId) { console.log('welcome: no channel, skip'); return; }
 
     const channel = member.guild.channels.cache.get(channelId)
       || await client.channels.fetch(channelId).catch(() => null);
-    if (!channel) return;
+    if (!channel) { console.log('welcome: channel not found, skip'); return; }
 
     const payload = buildWelcomePayload(member, cfg);
     await channel.send(payload);
+    console.log('welcome: SENT to', channelId);
   } catch (e) {
     console.error('Welcome error:', e);
   }
@@ -1458,40 +1474,31 @@ client.on('interactionCreate', async interaction => {
     const adminName = `<@${interaction.user.id}>`;
     const adminTag = interaction.user.tag;
     const roleName = ROLE_NAMES[role] || role;
+    const isAccept = action === 'accept';
 
+    const oldEmbed = interaction.message.embeds[0];
+    const newEmbed = isAccept
+      ? EmbedBuilder.from(oldEmbed).setColor(0x4ade80).setFooter({ text: `Принято: ${adminTag}` }).setTimestamp()
+      : EmbedBuilder.from(oldEmbed).setColor(0x9ca3af).setFooter({ text: `Отклонено: ${adminTag}` }).setTimestamp();
     const updatedRow = new ActionRowBuilder().addComponents(
       ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
       ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
     );
-    await interaction.message.edit({ components: [updatedRow] });
+    await interaction.message.edit({ embeds: [newEmbed], components: [updatedRow] });
 
-    if (action === 'accept') {
-      const acceptText =
-        `**Your application for ${roleName} has been accepted!**\n\n` +
-        `**Accepted by:** ${adminName}\n\n` +
-        `**Server:** ${INVITE}\n` +
-        `After joining, go to voice channel for verification.\n\n` +
-        `After verification you will get access to study materials.`;
-      const embed = new EmbedBuilder().setColor(0x4ade80).setDescription(acceptText).setFooter({ text: `Accepted by: ${adminTag}` }).setTimestamp();
-      const member = await findUserByDiscord(discordName, interaction.guild);
-      if (member) {
-        const sent = await sendDM(member.user.id, embed);
-        await interaction.followUp({ content: sent ? `Notification sent to **${discordName}**` : `Could not send DM to **${discordName}** (DMs closed)`, ephemeral: true });
-      } else {
-        await interaction.followUp({ content: `User **${discordName}** not found on server.`, ephemeral: true });
-      }
-    } else if (action === 'reject') {
-      const rejectText =
-        `**Your application for ${roleName} has been rejected.**\n\n` +
-        `Thank you for your interest, but we decided to go with another candidate.`;
-      const embed = new EmbedBuilder().setColor(0xf87171).setDescription(rejectText).setFooter({ text: `Rejected by: ${adminTag}` }).setTimestamp();
-      const member = await findUserByDiscord(discordName, interaction.guild);
-      if (member) {
-        const sent = await sendDM(member.user.id, embed);
-        await interaction.followUp({ content: sent ? `Notification sent to **${discordName}**` : `Could not send DM to **${discordName}**`, ephemeral: true });
-      } else {
-        await interaction.followUp({ content: `User **${discordName}** not found.`, ephemeral: true });
-      }
+    const member = await findUserByDiscord(discordName, interaction.guild);
+    if (member) {
+      const dmEmbed = isAccept
+        ? new EmbedBuilder().setColor(0x4ade80).setTitle('Заявка принята')
+            .setDescription(`Ваша заявка на ${roleName} **принята**!\n\nПринял: ${adminName}\nДобро пожаловать в RealMord!`)
+            .setTimestamp()
+        : new EmbedBuilder().setColor(0xf87171).setTitle('Заявка отклонена')
+            .setDescription(`Ваша заявка на ${roleName} **отклонена**.\n\nСпасибо за интерес. Если есть вопросы — обратитесь к администрации.`)
+            .setTimestamp();
+      const sent = await sendDM(member.user.id, dmEmbed);
+      await interaction.followUp({ content: sent ? `Уведомление отправлено **${discordName}**` : `Не удалось отправить ЛС **${discordName}** (ЛС закрыты)`, ephemeral: true });
+    } else {
+      await interaction.followUp({ content: `Пользователь **${discordName}** не найден на сервере.`, ephemeral: true });
     }
   } catch (e) {
     console.error('Interaction error:', e);
