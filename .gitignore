@@ -1,0 +1,12 @@
+token.txt
+node_modules/
+.env
+*.log
+bot_log.txt
+bot_err.txt
+tunnel_err.txt
+tunnel_out.txt
+_auth_*.txt
+cloudflared.exe
+rename_log.json
+index.js

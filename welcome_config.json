@@ -1,0 +1,15 @@
+{
+  "1534303697645998330": {
+    "enabled": true,
+    "channelId": "1557768085258375220",
+    "title": "{displayname} | Добро пожаловать!",
+    "description": "**{username}**, мы рады видеть тебя на **{server}**!\nТы наш **{memberCount}** участник.\n\n> Приятного общения и не забудь ознакомиться с правилами!",
+    "image": "https://i.gifer.com/5ufw.gif",
+    "color": "#60a5fa",
+    "thumbnail": true,
+    "footer": "REALM · Приветствие",
+    "buttons": [
+      { "label": "Правила", "url": "https://discord.com/channels/1534303697645998330/1557774125970227270" }
+    ]
+  }
+}
