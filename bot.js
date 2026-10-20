@@ -6,7 +6,7 @@ import { dirname, join } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const TOKEN = process.env.DISCORD_TOKEN ||;
+const TOKEN = process.env.DISCORD_TOKEN || '';
 const GUILD_ID = process.env.GUILD_ID || '1534303697645998330';
 const INVITE = process.env.INVITE_URL || 'https://discord.gg/uSSGpABkMT';
 
