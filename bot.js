@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const TOKEN = process.env.DISCORD_TOKEN || '';
 const GUILD_ID = process.env.GUILD_ID || '1534303697645998330';
-const INVITE = process.env.INVITE_URL || 'https://discord.gg/uSSGpABkMT';
+const INVITE = process.env.INVITE_URL || 'https://discord.gg/FZjk5Ydyz';
 
 const CHANNELS = {
   helper: process.env.CH_HELPER || '1536510809981845686',
@@ -1508,8 +1508,8 @@ client.on('interactionCreate', async interaction => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`HTTP server on port ${PORT}`));
+const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => console.log(`HTTP server on port ${PORT}`));
 
 client.login(TOKEN).catch(err => {
   console.error('Discord login error:', err.message);
